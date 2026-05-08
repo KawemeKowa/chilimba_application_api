@@ -1,0 +1,953 @@
+{
+  "info": {
+    "name": "Chilimba API",
+    "description": "Chilimba Digital Village Banking & Fund Pooling Platform\n\n## Setup\n1. Set `baseUrl` variable to your server (default: http://localhost:3000/api)\n2. Run **Auth / Register** or **Auth / Login** — the collection auto-saves `accessToken` and `refreshToken` from the response.\n3. All protected requests use `{{accessToken}}` automatically.\n\n## Roles\n- `member` — user endpoints\n- `admin` — /admin/* endpoints\n- `super_admin` — /superadmin/* endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "chilimba-api-v1"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "groupId", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "contributionId", "value": "", "type": "string" },
+    { "key": "withdrawalId", "value": "", "type": "string" },
+    { "key": "poolId", "value": "", "type": "string" },
+    { "key": "messageId", "value": "", "type": "string" },
+    { "key": "walletId", "value": "", "type": "string" },
+    { "key": "notificationId", "value": "", "type": "string" },
+    { "key": "feeId", "value": "", "type": "string" },
+    { "key": "payoutScheduleId", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "event": [],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Liveness Probe",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('accessToken', body.data.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.data.refreshToken);",
+                  "  pm.collectionVariables.set('userId', body.data.user.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Bwalya\",\n  \"lastName\": \"Mwale\",\n  \"email\": \"bwalya@example.com\",\n  \"phone\": \"+260976543210\",\n  \"password\": \"Secure@123\",\n  \"dateOfBirth\": \"1995-06-15\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"] }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('accessToken', body.data.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.data.refreshToken);",
+                  "  pm.collectionVariables.set('userId', body.data.user.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"bwalya@example.com\",\n  \"password\": \"Secure@123\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('accessToken', body.data.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.data.refreshToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "refresh"] }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+          }
+        },
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Bwalya\",\n  \"lastName\": \"Mwale\",\n  \"phone\": \"+260976543210\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"Secure@123\",\n  \"newPassword\": \"NewSecure@456\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/change-password", "host": ["{{baseUrl}}"], "path": ["auth", "change-password"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Groups",
+      "item": [
+        {
+          "name": "Create Group",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('groupId', body.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Lusaka North Chilimba\",\n  \"description\": \"Family savings group\",\n  \"monthlyAmount\": 500,\n  \"maxMembers\": 12,\n  \"contributionDay\": 1,\n  \"payoutDay\": 25,\n  \"minApprovalsWithdrawal\": 3,\n  \"currency\": \"ZMW\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/groups", "host": ["{{baseUrl}}"], "path": ["groups"] }
+          }
+        },
+        {
+          "name": "Join Group",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inviteCode\": \"AB12CD34\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/groups/join", "host": ["{{baseUrl}}"], "path": ["groups", "join"] }
+          }
+        },
+        {
+          "name": "My Groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/groups", "host": ["{{baseUrl}}"], "path": ["groups"] }
+          }
+        },
+        {
+          "name": "Get Group Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/groups/{{groupId}}", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}"] }
+          }
+        },
+        {
+          "name": "Update Group",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Lusaka North Chilimba Updated\",\n  \"contributionDay\": 5,\n  \"payoutDay\": 28,\n  \"minApprovalsWithdrawal\": 4\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/groups/{{groupId}}", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}"] }
+          }
+        },
+        {
+          "name": "Rotate Invite Code",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/groups/{{groupId}}/rotate-invite", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}", "rotate-invite"] }
+          }
+        },
+        {
+          "name": "Get Payout Schedule",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/groups/{{groupId}}/payout-schedule", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}", "payout-schedule"] }
+          }
+        },
+        {
+          "name": "Remove Member",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/groups/{{groupId}}/members/{{userId}}", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}", "members", "{{userId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Contributions",
+      "item": [
+        {
+          "name": "My Contributions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contributions/my?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["contributions", "my"],
+              "query": [
+                { "key": "groupId", "value": "{{groupId}}", "disabled": true, "description": "Filter by group" },
+                { "key": "status", "value": "pending", "disabled": true, "description": "pending | paid | late | waived" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Upcoming Dues",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/contributions/upcoming", "host": ["{{baseUrl}}"], "path": ["contributions", "upcoming"] }
+          }
+        },
+        {
+          "name": "Pay Contribution",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/contributions/{{contributionId}}/pay", "host": ["{{baseUrl}}"], "path": ["contributions", "{{contributionId}}", "pay"] }
+          }
+        },
+        {
+          "name": "Group Contributions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contributions/group/{{groupId}}?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["contributions", "group", "{{groupId}}"],
+              "query": [
+                { "key": "cycle", "value": "1", "disabled": true, "description": "Filter by cycle number" },
+                { "key": "round", "value": "1", "disabled": true, "description": "Filter by round number" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Withdrawals",
+      "item": [
+        {
+          "name": "Request Withdrawal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('withdrawalId', body.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1500,\n  \"reason\": \"Emergency repair for the group meeting hall\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/withdrawals/groups/{{groupId}}", "host": ["{{baseUrl}}"], "path": ["withdrawals", "groups", "{{groupId}}"] }
+          }
+        },
+        {
+          "name": "List Group Withdrawals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/withdrawals/groups/{{groupId}}?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["withdrawals", "groups", "{{groupId}}"],
+              "query": [
+                { "key": "status", "value": "pending_approval", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Vote on Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approved\",\n  \"comment\": \"Valid reason, approved.\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/withdrawals/{{withdrawalId}}/vote", "host": ["{{baseUrl}}"], "path": ["withdrawals", "{{withdrawalId}}", "vote"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Committees",
+      "item": [
+        {
+          "name": "Create Pool",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('poolId', body.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Funeral support for Mama Banda\",\n  \"description\": \"Contribute to support the Banda family\",\n  \"category\": \"funeral\",\n  \"targetAmount\": 10000,\n  \"closesAt\": \"2025-07-15T23:59:00Z\",\n  \"beneficiary\": \"Banda Family\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/committees/groups/{{groupId}}", "host": ["{{baseUrl}}"], "path": ["committees", "groups", "{{groupId}}"] }
+          }
+        },
+        {
+          "name": "List Pools",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/committees/groups/{{groupId}}?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["committees", "groups", "{{groupId}}"],
+              "query": [
+                { "key": "status", "value": "active", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Contribute to Pool",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 200,\n  \"message\": \"Sending love and support\",\n  \"isAnonymous\": false\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/committees/{{poolId}}/contribute", "host": ["{{baseUrl}}"], "path": ["committees", "{{poolId}}", "contribute"] }
+          }
+        },
+        {
+          "name": "List Contributors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/committees/{{poolId}}/contributors", "host": ["{{baseUrl}}"], "path": ["committees", "{{poolId}}", "contributors"] }
+          }
+        },
+        {
+          "name": "Close Pool",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/committees/{{poolId}}/close", "host": ["{{baseUrl}}"], "path": ["committees", "{{poolId}}", "close"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Messages",
+      "item": [
+        {
+          "name": "Post Message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('messageId', body.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Don't forget contributions are due on the 1st!\",\n  \"parentId\": null\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/groups/{{groupId}}/messages", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}", "messages"] }
+          }
+        },
+        {
+          "name": "Reply to Message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Thanks for the reminder!\",\n  \"parentId\": \"{{messageId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/groups/{{groupId}}/messages", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}", "messages"] }
+          }
+        },
+        {
+          "name": "Get Messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/groups/{{groupId}}/messages?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["groups", "{{groupId}}", "messages"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Message",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/messages/{{messageId}}", "host": ["{{baseUrl}}"], "path": ["messages", "{{messageId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        {
+          "name": "Get My Wallets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/wallet", "host": ["{{baseUrl}}"], "path": ["wallet"] }
+          }
+        },
+        {
+          "name": "Transaction History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/transactions?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallet", "transactions"],
+              "query": [
+                { "key": "walletId", "value": "{{walletId}}", "disabled": true, "description": "Filter to specific wallet" },
+                { "key": "type", "value": "contribution", "disabled": true, "description": "contribution | payout | withdrawal | fee | committee | refund | adjustment" },
+                { "key": "startDate", "value": "2025-01-01", "disabled": true },
+                { "key": "endDate", "value": "2025-12-31", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "Get Notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"],
+              "query": [
+                { "key": "unreadOnly", "value": "true", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mark All Read",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/notifications/read-all", "host": ["{{baseUrl}}"], "path": ["notifications", "read-all"] }
+          }
+        },
+        {
+          "name": "Mark One Read",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/notifications/{{notificationId}}/read", "host": ["{{baseUrl}}"], "path": ["notifications", "{{notificationId}}", "read"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — Users",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users"],
+              "query": [
+                { "key": "status", "value": "active", "disabled": true, "description": "active | pending_verification | suspended | banned" },
+                { "key": "role", "value": "member", "disabled": true, "description": "member | admin | super_admin" },
+                { "key": "search", "value": "Bwalya", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get User Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/admin/users/{{userId}}", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{userId}}"] }
+          }
+        },
+        {
+          "name": "Update User Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"suspended\",\n  \"reason\": \"Fraudulent activity reported\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/users/{{userId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{userId}}", "status"] }
+          }
+        },
+        {
+          "name": "Verify User (KYC)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/admin/users/{{userId}}/verify", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{userId}}", "verify"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — Groups",
+      "item": [
+        {
+          "name": "List All Groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/groups?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "groups"],
+              "query": [
+                { "key": "status", "value": "active", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Group Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"paused\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/groups/{{groupId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "groups", "{{groupId}}", "status"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — Payouts",
+      "item": [
+        {
+          "name": "Get Pending Payouts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/admin/payouts/pending", "host": ["{{baseUrl}}"], "path": ["admin", "payouts", "pending"] }
+          }
+        },
+        {
+          "name": "Disburse Payout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/admin/payouts/{{payoutScheduleId}}/disburse", "host": ["{{baseUrl}}"], "path": ["admin", "payouts", "{{payoutScheduleId}}", "disburse"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — Withdrawals",
+      "item": [
+        {
+          "name": "List All Withdrawals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/withdrawals?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "withdrawals"],
+              "query": [
+                { "key": "status", "value": "pending_approval", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — Fees",
+      "item": [
+        {
+          "name": "List Fee Configs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/admin/fees", "host": ["{{baseUrl}}"], "path": ["admin", "fees"] }
+          }
+        },
+        {
+          "name": "Update Fee",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"value\": 0.75,\n  \"isActive\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/fees/{{feeId}}", "host": ["{{baseUrl}}"], "path": ["admin", "fees", "{{feeId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — Notifications",
+      "item": [
+        {
+          "name": "Broadcast Notification",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Platform Maintenance\",\n  \"body\": \"Chilimba will be down for maintenance on Sunday 2–4 AM.\",\n  \"targetRole\": \"member\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/notifications/broadcast", "host": ["{{baseUrl}}"], "path": ["admin", "notifications", "broadcast"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SuperAdmin — Analytics",
+      "item": [
+        {
+          "name": "Platform Overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/superadmin/analytics/overview", "host": ["{{baseUrl}}"], "path": ["superadmin", "analytics", "overview"] }
+          }
+        },
+        {
+          "name": "Daily Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/superadmin/analytics/daily?days=30",
+              "host": ["{{baseUrl}}"],
+              "path": ["superadmin", "analytics", "daily"],
+              "query": [{ "key": "days", "value": "30" }]
+            }
+          }
+        },
+        {
+          "name": "Group Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/superadmin/analytics/groups?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["superadmin", "analytics", "groups"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Member Compliance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/superadmin/analytics/compliance", "host": ["{{baseUrl}}"], "path": ["superadmin", "analytics", "compliance"] }
+          }
+        },
+        {
+          "name": "Revenue Breakdown",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/superadmin/analytics/revenue?groupBy=month&months=12",
+              "host": ["{{baseUrl}}"],
+              "path": ["superadmin", "analytics", "revenue"],
+              "query": [
+                { "key": "groupBy", "value": "month", "description": "day | week | month" },
+                { "key": "months", "value": "12" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Top Groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/superadmin/analytics/top-groups", "host": ["{{baseUrl}}"], "path": ["superadmin", "analytics", "top-groups"] }
+          }
+        },
+        {
+          "name": "User Growth",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/superadmin/analytics/user-growth", "host": ["{{baseUrl}}"], "path": ["superadmin", "analytics", "user-growth"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SuperAdmin — Settings",
+      "item": [
+        {
+          "name": "Get All Settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/superadmin/settings", "host": ["{{baseUrl}}"], "path": ["superadmin", "settings"] }
+          }
+        },
+        {
+          "name": "Update Setting",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"value\": \"100\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/superadmin/settings/min_contribution_amount",
+              "host": ["{{baseUrl}}"],
+              "path": ["superadmin", "settings", "min_contribution_amount"]
+            },
+            "description": "Available keys: min_contribution_amount, max_members_per_group, withdrawal_expiry_hours, maintenance_mode, max_groups_per_user, kyc_required"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SuperAdmin — Admins",
+      "item": [
+        {
+          "name": "List Admins",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/superadmin/admins", "host": ["{{baseUrl}}"], "path": ["superadmin", "admins"] }
+          }
+        },
+        {
+          "name": "Update User Role",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"admin\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/superadmin/admins/{{userId}}/role", "host": ["{{baseUrl}}"], "path": ["superadmin", "admins", "{{userId}}", "role"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SuperAdmin — Audit",
+      "item": [
+        {
+          "name": "Get Audit Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/superadmin/audit-logs?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["superadmin", "audit-logs"],
+              "query": [
+                { "key": "action", "value": "user_banned", "disabled": true },
+                { "key": "actorId", "value": "{{userId}}", "disabled": true },
+                { "key": "entityType", "value": "user", "disabled": true },
+                { "key": "startDate", "value": "2025-01-01", "disabled": true },
+                { "key": "endDate", "value": "2025-12-31", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SuperAdmin — Health",
+      "item": [
+        {
+          "name": "Platform Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/superadmin/health", "host": ["{{baseUrl}}"], "path": ["superadmin", "health"] }
+          }
+        }
+      ]
+    }
+  ]
+}

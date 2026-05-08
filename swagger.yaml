@@ -1,0 +1,3036 @@
+openapi: 3.0.3
+info:
+  title: Chilimba Digital Village Banking API
+  description: |
+    Chilimba is a digital village banking and fund-pooling platform. This API covers
+    member authentication, group management, contribution tracking, multi-member
+    withdrawal voting, committee pool crowdfunding, group messaging, wallet management,
+    notifications, and full admin/super-admin controls.
+
+    ## Authentication
+    Most endpoints require a Bearer JWT in the `Authorization` header.
+    Access tokens expire in **15 minutes**. Use `POST /auth/refresh` to rotate.
+
+    ## Rate Limiting
+    - Global: 100 requests per 15 minutes
+    - Auth endpoints (`/auth/register`, `/auth/login`): 10 requests per 15 minutes
+
+    ## Response Envelope
+    | Shape | When |
+    |---|---|
+    | `{ "success": true, "data": {...} }` | Single object |
+    | `{ "success": true, "data": [...], "pagination": {...} }` | Paginated list |
+    | `{ "success": false, "message": "..." }` | Error |
+    | `{ "success": false, "message": "Validation failed", "errors": [...] }` | 422 |
+
+    ## Roles
+    | Role | Access |
+    |---|---|
+    | `member` | All `/api/` user endpoints |
+    | `admin` | All `/api/admin/` endpoints |
+    | `super_admin` | All endpoints |
+  version: 1.0.0
+  contact:
+    email: kawemekowa@gmail.com
+  license:
+    name: Private
+
+servers:
+  - url: http://localhost:3000/api
+    description: Local development
+  - url: https://api.chilimba.app/api
+    description: Production
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Health
+    description: Public liveness probe
+  - name: Auth
+    description: Registration, login, token management, profile
+  - name: Groups
+    description: Chilimba group lifecycle management
+  - name: Contributions
+    description: Monthly dues tracking and payment
+  - name: Withdrawals
+    description: Group fund withdrawal with multi-member approval voting
+  - name: Committees
+    description: Voluntary crowdfunding campaigns within a group
+  - name: Messages
+    description: Group message board with threaded replies
+  - name: Wallet
+    description: Personal and group wallets with transaction history
+  - name: Notifications
+    description: Per-user notification management
+  - name: Admin - Users
+    description: "Required role: admin or super_admin"
+  - name: Admin - Groups
+    description: "Required role: admin or super_admin"
+  - name: Admin - Payouts
+    description: "Required role: admin or super_admin"
+  - name: Admin - Withdrawals
+    description: "Required role: admin or super_admin"
+  - name: Admin - Fees
+    description: "Required role: admin or super_admin"
+  - name: Admin - Notifications
+    description: "Required role: admin or super_admin"
+  - name: SuperAdmin - Analytics
+    description: "Required role: super_admin"
+  - name: SuperAdmin - Settings
+    description: "Required role: super_admin"
+  - name: SuperAdmin - Admins
+    description: "Required role: super_admin"
+  - name: SuperAdmin - Audit
+    description: "Required role: super_admin"
+  - name: SuperAdmin - Health
+    description: "Required role: super_admin"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Obtain via POST /auth/login or POST /auth/register"
+
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Description of error
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Validation failed
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                example: monthlyAmount
+              message:
+                type: string
+                example: Must be a number greater than 0
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 250
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        totalPages:
+          type: integer
+          example: 13
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        first_name:
+          type: string
+          example: Bwalya
+        last_name:
+          type: string
+          example: Mwale
+        email:
+          type: string
+          format: email
+          example: bwalya@example.com
+        phone:
+          type: string
+          example: "+260976543210"
+        role:
+          type: string
+          enum: [member, admin, super_admin]
+        status:
+          type: string
+          enum: [pending_verification, active, suspended, banned]
+        date_of_birth:
+          type: string
+          format: date
+          nullable: true
+        id_type:
+          type: string
+          nullable: true
+        id_verified:
+          type: boolean
+        profile_photo_url:
+          type: string
+          nullable: true
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Lusaka North Chilimba
+        description:
+          type: string
+          nullable: true
+        monthly_amount:
+          type: number
+          example: 500
+        max_members:
+          type: integer
+          example: 12
+        current_members:
+          type: integer
+          example: 8
+        contribution_day:
+          type: integer
+          example: 1
+        payout_day:
+          type: integer
+          example: 25
+        currency:
+          type: string
+          example: ZMW
+        status:
+          type: string
+          enum: [pending, active, paused, completed, dissolved]
+        min_approvals_withdrawal:
+          type: integer
+          example: 3
+        invite_code:
+          type: string
+          example: AB12CD34
+        created_at:
+          type: string
+          format: date-time
+
+    Contribution:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        cycle_number:
+          type: integer
+          example: 1
+        round_number:
+          type: integer
+          example: 3
+        amount_due:
+          type: number
+          example: 500
+        amount_paid:
+          type: number
+          nullable: true
+          example: 500
+        status:
+          type: string
+          enum: [pending, paid, late, waived]
+        due_date:
+          type: string
+          format: date
+          example: "2025-06-01"
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Withdrawal:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        requester_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          example: 1500
+        reason:
+          type: string
+          example: Emergency repair for the group meeting hall
+        status:
+          type: string
+          enum: [pending_approval, approved, rejected, processing, completed, expired]
+        approvals_count:
+          type: integer
+          example: 2
+        rejections_count:
+          type: integer
+          example: 0
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    CommitteePool:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        created_by:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: Funeral support for Mama Banda
+        description:
+          type: string
+        category:
+          type: string
+          enum: [funeral, wedding, emergency, other]
+        target_amount:
+          type: number
+          nullable: true
+          example: 10000
+        total_raised:
+          type: number
+          example: 3400
+        beneficiary:
+          type: string
+          nullable: true
+          example: Banda Family
+        status:
+          type: string
+          enum: [active, closed]
+        closes_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Wallet:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_type:
+          type: string
+          enum: [user, group]
+        owner_id:
+          type: string
+          format: uuid
+        balance:
+          type: number
+          example: 2500.00
+        currency:
+          type: string
+          example: ZMW
+        created_at:
+          type: string
+          format: date-time
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        wallet_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [contribution, payout, withdrawal, fee, committee, refund, adjustment]
+        direction:
+          type: string
+          enum: [credit, debit]
+        amount:
+          type: number
+          example: 500
+        balance_after:
+          type: number
+          example: 3000
+        reference:
+          type: string
+          example: CHI-B1C2D3E4-1-1
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          example: contribution_due
+        title:
+          type: string
+          example: Contribution Due Tomorrow
+        body:
+          type: string
+          example: Your ZMW 500 contribution for Lusaka North Chilimba is due on 1 Jun.
+        data:
+          type: object
+          nullable: true
+        is_read:
+          type: boolean
+          example: false
+        created_at:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        is_deleted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    PayoutSchedule:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        cycle_number:
+          type: integer
+          example: 1
+        payout_order:
+          type: integer
+          example: 3
+        scheduled_date:
+          type: string
+          format: date
+          example: "2025-08-25"
+        expected_amount:
+          type: number
+          example: 6000
+        status:
+          type: string
+          enum: [scheduled, disbursed, skipped]
+        first_name:
+          type: string
+        last_name:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Unauthorized
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Forbidden
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Not found
+    ValidationError:
+      description: Request body failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Too many requests. Please try again later.
+
+paths:
+  # ─── PUBLIC ───────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: API is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  # ─── AUTH ─────────────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user (must be ≥ 16 years old)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [firstName, lastName, email, phone, password]
+              properties:
+                firstName:
+                  type: string
+                  example: Bwalya
+                lastName:
+                  type: string
+                  example: Mwale
+                email:
+                  type: string
+                  format: email
+                  example: bwalya@example.com
+                phone:
+                  type: string
+                  example: "+260976543210"
+                password:
+                  type: string
+                  minLength: 8
+                  example: Secure@123
+                dateOfBirth:
+                  type: string
+                  format: date
+                  example: "1995-06-15"
+      responses:
+        '201':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Registration successful
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: '#/components/schemas/User'
+                      accessToken:
+                        type: string
+                        description: JWT — expires in 15 minutes
+                      refreshToken:
+                        type: string
+                        description: Opaque token — expires in 7 days
+        '400':
+          description: Under 16 years old or duplicate email/phone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login — returns access + refresh tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: bwalya@example.com
+                password:
+                  type: string
+                  example: Secure@123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: '#/components/schemas/User'
+                      accessToken:
+                        type: string
+                        description: JWT — expires in 15 minutes
+                      refreshToken:
+                        type: string
+                        description: Opaque token — expires in 7 days
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Account suspended or banned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate refresh token — get new access + refresh tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: New token pair issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      accessToken:
+                        type: string
+                      refreshToken:
+                        type: string
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke refresh token
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      responses:
+        '200':
+          description: Full user profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [Auth]
+      summary: Update profile (firstName, lastName, phone)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                phone:
+                  type: string
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      first_name:
+                        type: string
+                      last_name:
+                        type: string
+                      email:
+                        type: string
+                      phone:
+                        type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change password — revokes all existing sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ─── GROUPS ───────────────────────────────────────────────────────────────────
+  /groups:
+    post:
+      tags: [Groups]
+      summary: Create a new Chilimba group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, monthlyAmount]
+              properties:
+                name:
+                  type: string
+                  maxLength: 150
+                  example: Lusaka North Chilimba
+                description:
+                  type: string
+                  example: Family savings group
+                monthlyAmount:
+                  type: number
+                  minimum: 1
+                  example: 500
+                maxMembers:
+                  type: integer
+                  minimum: 2
+                  maximum: 50
+                  example: 12
+                contributionDay:
+                  type: integer
+                  minimum: 1
+                  maximum: 28
+                  example: 1
+                payoutDay:
+                  type: integer
+                  minimum: 1
+                  maximum: 28
+                  example: 25
+                minApprovalsWithdrawal:
+                  type: integer
+                  example: 3
+                currency:
+                  type: string
+                  example: ZMW
+      responses:
+        '201':
+          description: Group created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    get:
+      tags: [Groups]
+      summary: List groups I belong to
+      responses:
+        '200':
+          description: My groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /groups/join:
+    post:
+      tags: [Groups]
+      summary: Join a group via 8-character invite code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inviteCode]
+              properties:
+                inviteCode:
+                  type: string
+                  minLength: 8
+                  maxLength: 8
+                  example: AB12CD34
+      responses:
+        '200':
+          description: Joined group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      groupId:
+                        type: string
+                        format: uuid
+                      message:
+                        type: string
+        '400':
+          description: Invalid code, group full, or already a member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /groups/{groupId}:
+    parameters:
+      - name: groupId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Groups]
+      summary: Group detail with member list
+      responses:
+        '200':
+          description: Group details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      group:
+                        $ref: '#/components/schemas/Group'
+                      members:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            user_id:
+                              type: string
+                              format: uuid
+                            first_name:
+                              type: string
+                            last_name:
+                              type: string
+                            role:
+                              type: string
+                              enum: [owner, admin, member]
+                            payout_order:
+                              type: integer
+                            joined_at:
+                              type: string
+                              format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Groups]
+      summary: Update group settings (group admin only)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                contributionDay:
+                  type: integer
+                payoutDay:
+                  type: integer
+                minApprovalsWithdrawal:
+                  type: integer
+      responses:
+        '200':
+          description: Group updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /groups/{groupId}/rotate-invite:
+    post:
+      tags: [Groups]
+      summary: Regenerate invite code (group admin only)
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: New invite code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      inviteCode:
+                        type: string
+                        example: XY98ZW12
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /groups/{groupId}/payout-schedule:
+    get:
+      tags: [Groups]
+      summary: Full rotation payout schedule for a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payout schedule
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PayoutSchedule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /groups/{groupId}/members/{userId}:
+    delete:
+      tags: [Groups]
+      summary: Remove a member from the group (group admin only)
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─── CONTRIBUTIONS ────────────────────────────────────────────────────────────
+  /contributions/my:
+    get:
+      tags: [Contributions]
+      summary: My contribution history
+      parameters:
+        - name: groupId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, paid, late, waived]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Contribution history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contribution'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /contributions/upcoming:
+    get:
+      tags: [Contributions]
+      summary: Upcoming dues — next 10 pending contributions
+      responses:
+        '200':
+          description: Upcoming dues
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contribution'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /contributions/{contributionId}/pay:
+    post:
+      tags: [Contributions]
+      summary: Mark a contribution as paid
+      parameters:
+        - name: contributionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Contribution paid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      reference:
+                        type: string
+                        example: CHI-B1C2D3E4-1-1
+                      amountPaid:
+                        type: number
+                        example: 500
+                      feeCharged:
+                        type: number
+                        example: 2.50
+                      netAmount:
+                        type: number
+                        example: 497.50
+        '400':
+          description: Already paid or not your contribution
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /contributions/group/{groupId}:
+    get:
+      tags: [Contributions]
+      summary: All contributions for a group (group members only)
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cycle
+          in: query
+          schema:
+            type: integer
+        - name: round
+          in: query
+          schema:
+            type: integer
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Group contributions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contribution'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── WITHDRAWALS ──────────────────────────────────────────────────────────────
+  /withdrawals/groups/{groupId}:
+    post:
+      tags: [Withdrawals]
+      summary: Request a group withdrawal
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount:
+                  type: number
+                  minimum: 0.01
+                  example: 1500
+                reason:
+                  type: string
+                  example: Emergency repair for the group meeting hall
+      responses:
+        '201':
+          description: Withdrawal request created — pending member votes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Withdrawal'
+        '400':
+          description: Insufficient group funds or open request already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      tags: [Withdrawals]
+      summary: List withdrawal requests for a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending_approval, approved, rejected, processing, completed, expired]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Withdrawal requests with approval votes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Withdrawal'
+                        - type: object
+                          properties:
+                            approvals:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  user_id:
+                                    type: string
+                                    format: uuid
+                                  action:
+                                    type: string
+                                    enum: [approved, rejected]
+                                  comment:
+                                    type: string
+                                    nullable: true
+                                  voted_at:
+                                    type: string
+                                    format: date-time
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /withdrawals/{withdrawalId}/vote:
+    post:
+      tags: [Withdrawals]
+      summary: Vote to approve or reject a withdrawal
+      description: |
+        **Lifecycle:** `pending_approval` → (enough approvals) → `approved` → `processing` → `completed`
+
+        `pending_approval` → (enough rejections) → `rejected`
+
+        `pending_approval` → (72h timeout) → `expired`
+      parameters:
+        - name: withdrawalId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [approved, rejected]
+                comment:
+                  type: string
+                  example: Valid reason, approved.
+      responses:
+        '200':
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      withdrawalId:
+                        type: string
+                        format: uuid
+                      newStatus:
+                        type: string
+                      approvalsCount:
+                        type: integer
+                      rejectionsCount:
+                        type: integer
+        '400':
+          description: Already voted, or withdrawal is not pending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─── COMMITTEES ───────────────────────────────────────────────────────────────
+  /committees/groups/{groupId}:
+    post:
+      tags: [Committees]
+      summary: Create a committee pool campaign
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, category]
+              properties:
+                title:
+                  type: string
+                  example: Funeral support for Mama Banda
+                description:
+                  type: string
+                  example: Contribute to support the Banda family
+                category:
+                  type: string
+                  enum: [funeral, wedding, emergency, other]
+                targetAmount:
+                  type: number
+                  minimum: 0
+                  example: 10000
+                closesAt:
+                  type: string
+                  format: date-time
+                  example: "2025-07-15T23:59:00Z"
+                beneficiary:
+                  type: string
+                  example: Banda Family
+      responses:
+        '201':
+          description: Campaign created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/CommitteePool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      tags: [Committees]
+      summary: List committee pool campaigns in a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, closed]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Committee pools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommitteePool'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /committees/{poolId}/contribute:
+    post:
+      tags: [Committees]
+      summary: Contribute to a campaign
+      parameters:
+        - name: poolId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: number
+                  minimum: 0.01
+                  example: 200
+                message:
+                  type: string
+                  example: Sending love and support
+                isAnonymous:
+                  type: boolean
+                  example: false
+      responses:
+        '200':
+          description: Contribution recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      contributionId:
+                        type: string
+                        format: uuid
+                      totalRaised:
+                        type: number
+        '400':
+          description: Pool is closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /committees/{poolId}/contributors:
+    get:
+      tags: [Committees]
+      summary: List contributors to a campaign
+      parameters:
+        - name: poolId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Contributors list — anonymous entries show null names
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        first_name:
+                          type: string
+                          nullable: true
+                        last_name:
+                          type: string
+                          nullable: true
+                        amount:
+                          type: number
+                        message:
+                          type: string
+                          nullable: true
+                        is_anonymous:
+                          type: boolean
+                        contributed_at:
+                          type: string
+                          format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /committees/{poolId}/close:
+    patch:
+      tags: [Committees]
+      summary: Close a campaign
+      parameters:
+        - name: poolId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Campaign closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Already closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── MESSAGES ─────────────────────────────────────────────────────────────────
+  /groups/{groupId}/messages:
+    post:
+      tags: [Messages]
+      summary: Post a message to a group board
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  maxLength: 2000
+                  example: "Don't forget contributions are due on the 1st!"
+                parentId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Set to reply to an existing message (thread)
+      responses:
+        '201':
+          description: Message posted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      tags: [Messages]
+      summary: Get group message board (paginated, with threads)
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Messages with nested replies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Message'
+                        - type: object
+                          properties:
+                            replies:
+                              type: array
+                              items:
+                                $ref: '#/components/schemas/Message'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /messages/{messageId}:
+    delete:
+      tags: [Messages]
+      summary: Delete own message (soft delete)
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Message deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not your message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─── WALLET ───────────────────────────────────────────────────────────────────
+  /wallet:
+    get:
+      tags: [Wallet]
+      summary: My wallets (personal + all group wallets I'm in)
+      responses:
+        '200':
+          description: Wallet list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /wallet/transactions:
+    get:
+      tags: [Wallet]
+      summary: Transaction history (filterable by wallet, type, date)
+      parameters:
+        - name: walletId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter to a specific wallet
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [contribution, payout, withdrawal, fee, committee, refund, adjustment]
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Transaction history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Transaction'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: My notifications
+      parameters:
+        - name: unreadOnly
+          in: query
+          schema:
+            type: boolean
+          description: Set true to return only unread notifications
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /notifications/read-all:
+    patch:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      responses:
+        '200':
+          description: All marked read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark a single notification as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Marked read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─── ADMIN: USERS ─────────────────────────────────────────────────────────────
+  /admin/users:
+    get:
+      tags: [Admin - Users]
+      summary: List all users
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, pending_verification, suspended, banned]
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [member, admin, super_admin]
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by name, email, or phone
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/users/{userId}:
+    get:
+      tags: [Admin - Users]
+      summary: User detail with group memberships
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: '#/components/schemas/User'
+                      groups:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /admin/users/{userId}/status:
+    patch:
+      tags: [Admin - Users]
+      summary: Suspend or ban a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, suspended, banned]
+                reason:
+                  type: string
+                  example: Fraudulent activity reported
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/users/{userId}/verify:
+    post:
+      tags: [Admin - Users]
+      summary: KYC verify and activate a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User verified and activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─── ADMIN: GROUPS ────────────────────────────────────────────────────────────
+  /admin/groups:
+    get:
+      tags: [Admin - Groups]
+      summary: List all groups platform-wide
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, active, paused, completed, dissolved]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Groups list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Group'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/groups/{groupId}/status:
+    patch:
+      tags: [Admin - Groups]
+      summary: Change group status
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, paused, completed, dissolved]
+      responses:
+        '200':
+          description: Group status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── ADMIN: PAYOUTS ───────────────────────────────────────────────────────────
+  /admin/payouts/pending:
+    get:
+      tags: [Admin - Payouts]
+      summary: Payouts due for disbursement
+      responses:
+        '200':
+          description: Pending payouts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PayoutSchedule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/payouts/{payoutScheduleId}/disburse:
+    post:
+      tags: [Admin - Payouts]
+      summary: Trigger payout disbursement to a member
+      parameters:
+        - name: payoutScheduleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payout disbursed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      reference:
+                        type: string
+                      amountDisbursed:
+                        type: number
+                      recipientId:
+                        type: string
+                        format: uuid
+        '400':
+          description: Already disbursed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── ADMIN: WITHDRAWALS ───────────────────────────────────────────────────────
+  /admin/withdrawals:
+    get:
+      tags: [Admin - Withdrawals]
+      summary: All withdrawal requests platform-wide
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending_approval, approved, rejected, processing, completed, expired]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Withdrawal requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Withdrawal'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── ADMIN: FEES ──────────────────────────────────────────────────────────────
+  /admin/fees:
+    get:
+      tags: [Admin - Fees]
+      summary: List fee configurations
+      responses:
+        '200':
+          description: Fee configurations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        name:
+                          type: string
+                          example: Contribution Processing Fee
+                        fee_type:
+                          type: string
+                          example: percentage
+                        value:
+                          type: number
+                          example: 0.5
+                        is_active:
+                          type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/fees/{feeId}:
+    patch:
+      tags: [Admin - Fees]
+      summary: Update fee value or active status
+      parameters:
+        - name: feeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value:
+                  type: number
+                  minimum: 0
+                  example: 0.75
+                isActive:
+                  type: boolean
+      responses:
+        '200':
+          description: Fee updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── ADMIN: BROADCAST ─────────────────────────────────────────────────────────
+  /admin/notifications/broadcast:
+    post:
+      tags: [Admin - Notifications]
+      summary: Broadcast notification to users by role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              properties:
+                title:
+                  type: string
+                  example: Platform Maintenance
+                body:
+                  type: string
+                  example: "Chilimba will be down for maintenance on Sunday 2–4 AM."
+                targetRole:
+                  type: string
+                  enum: [member, group_admin, admin]
+                  description: Omit to broadcast to all users
+      responses:
+        '200':
+          description: Broadcast sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      recipientCount:
+                        type: integer
+                        example: 980
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── SUPERADMIN: ANALYTICS ────────────────────────────────────────────────────
+  /superadmin/analytics/overview:
+    get:
+      tags: [SuperAdmin - Analytics]
+      summary: Full platform snapshot
+      responses:
+        '200':
+          description: Platform overview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      users:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                          active:
+                            type: integer
+                          pending_verification:
+                            type: integer
+                          registered_today:
+                            type: integer
+                          registered_last_7d:
+                            type: integer
+                      groups:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                          active:
+                            type: integer
+                          avg_monthly_amount:
+                            type: number
+                      transactions:
+                        type: object
+                        properties:
+                          total_volume:
+                            type: string
+                            example: "4500000.00"
+                          fee_revenue:
+                            type: string
+                            example: "45000.00"
+                          txns_today:
+                            type: integer
+                      wallets:
+                        type: object
+                        properties:
+                          total_balance_on_platform:
+                            type: string
+                            example: "820000.00"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/analytics/daily:
+    get:
+      tags: [SuperAdmin - Analytics]
+      summary: Daily transaction stats
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 30
+          description: Number of past days
+      responses:
+        '200':
+          description: Daily stats array
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                        transaction_count:
+                          type: integer
+                        total_volume:
+                          type: number
+                        fee_revenue:
+                          type: number
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/analytics/groups:
+    get:
+      tags: [SuperAdmin - Analytics]
+      summary: Per-group financial summary (paginated)
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Group financial summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/analytics/compliance:
+    get:
+      tags: [SuperAdmin - Analytics]
+      summary: Member contribution compliance rates
+      responses:
+        '200':
+          description: Compliance data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id:
+                          type: string
+                          format: uuid
+                        first_name:
+                          type: string
+                        last_name:
+                          type: string
+                        compliance_rate:
+                          type: number
+                          description: 0–100 percentage
+                          example: 87.5
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/analytics/revenue:
+    get:
+      tags: [SuperAdmin - Analytics]
+      summary: Revenue breakdown by fee type and period
+      parameters:
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: month
+        - name: months
+          in: query
+          schema:
+            type: integer
+            default: 12
+      responses:
+        '200':
+          description: Revenue breakdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        period:
+                          type: string
+                          example: "2025-06"
+                        contribution_fees:
+                          type: number
+                        withdrawal_fees:
+                          type: number
+                        total_revenue:
+                          type: number
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/analytics/top-groups:
+    get:
+      tags: [SuperAdmin - Analytics]
+      summary: Top 20 groups by transaction volume
+      responses:
+        '200':
+          description: Top groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group_id:
+                          type: string
+                          format: uuid
+                        name:
+                          type: string
+                        total_volume:
+                          type: number
+                        member_count:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/analytics/user-growth:
+    get:
+      tags: [SuperAdmin - Analytics]
+      summary: Monthly user registration trend
+      responses:
+        '200':
+          description: User growth data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        month:
+                          type: string
+                          example: "2025-06"
+                        new_users:
+                          type: integer
+                        total_users:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── SUPERADMIN: SETTINGS ─────────────────────────────────────────────────────
+  /superadmin/settings:
+    get:
+      tags: [SuperAdmin - Settings]
+      summary: All platform settings
+      description: |
+        | Key | Default | Description |
+        |---|---|---|
+        | `min_contribution_amount` | 50 | Min monthly contribution (ZMW) |
+        | `max_members_per_group` | 50 | Max members per group |
+        | `withdrawal_expiry_hours` | 72 | Hours before withdrawal expires |
+        | `maintenance_mode` | false | Enable/disable platform |
+        | `max_groups_per_user` | 5 | Max groups per user |
+        | `kyc_required` | true | Require KYC verification |
+      responses:
+        '200':
+          description: Settings list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        value:
+                          type: string
+                        description:
+                          type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/settings/{key}:
+    patch:
+      tags: [SuperAdmin - Settings]
+      summary: Update a platform setting by key
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          example: min_contribution_amount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  example: "100"
+      responses:
+        '200':
+          description: Setting updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ─── SUPERADMIN: ADMINS ───────────────────────────────────────────────────────
+  /superadmin/admins:
+    get:
+      tags: [SuperAdmin - Admins]
+      summary: List all admin users
+      responses:
+        '200':
+          description: Admin users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /superadmin/admins/{userId}/role:
+    patch:
+      tags: [SuperAdmin - Admins]
+      summary: Promote or demote user role
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [member, admin, super_admin]
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── SUPERADMIN: AUDIT ────────────────────────────────────────────────────────
+  /superadmin/audit-logs:
+    get:
+      tags: [SuperAdmin - Audit]
+      summary: Searchable audit trail
+      parameters:
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: "e.g. user_banned, payout_disbursed"
+        - name: actorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: entityType
+          in: query
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Audit logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        actor_id:
+                          type: string
+                          format: uuid
+                        action:
+                          type: string
+                        entity_type:
+                          type: string
+                        entity_id:
+                          type: string
+                          format: uuid
+                        changes:
+                          type: object
+                        ip_address:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── SUPERADMIN: HEALTH ───────────────────────────────────────────────────────
+  /superadmin/health:
+    get:
+      tags: [SuperAdmin - Health]
+      summary: Platform health with alert counts
+      responses:
+        '200':
+          description: Platform health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  database:
+                    type: object
+                    properties:
+                      connected:
+                        type: boolean
+                        example: true
+                  alerts:
+                    type: object
+                    properties:
+                      pendingPayouts:
+                        type: integer
+                        example: 3
+                      failedTransactions24h:
+                        type: integer
+                        example: 0
+                      pendingKycVerifications:
+                        type: integer
+                        example: 42
+                      expiredWithdrawals:
+                        type: integer
+                        example: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
