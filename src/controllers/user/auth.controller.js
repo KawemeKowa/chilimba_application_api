@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { query } = require('../../config/db');
 const email = require('../../services/email.service');
+const storage = require('../../services/storage.service');
 
 const generateTokens = (userId, role) => {
   const accessToken = jwt.sign(
@@ -37,6 +38,17 @@ const register = async (req, res, next) => {
     );
 
     const user = result.rows[0];
+
+    if (req.file) {
+      const url = await storage.uploadFile(
+        `profiles/${user.id}/avatar`,
+        req.file.buffer,
+        req.file.mimetype
+      );
+      await query('UPDATE users SET profile_photo_url = $1 WHERE id = $2', [url, user.id]);
+      user.profile_photo_url = url;
+    }
+
     const { accessToken, refreshToken } = generateTokens(user.id, user.role);
 
     // Store hashed refresh token
@@ -169,12 +181,26 @@ const getMe = async (req, res, next) => {
 const updateProfile = async (req, res, next) => {
   try {
     const { firstName, lastName, phone } = req.body;
+
+    let photoUrl;
+    if (req.file) {
+      photoUrl = await storage.uploadFile(
+        `profiles/${req.user.id}/avatar`,
+        req.file.buffer,
+        req.file.mimetype
+      );
+    }
+
     const result = await query(
-      `UPDATE users SET first_name = COALESCE($1, first_name), last_name = COALESCE($2, last_name),
-        phone = COALESCE($3, phone), updated_at = NOW()
-       WHERE id = $4
-       RETURNING id, first_name, last_name, email, phone`,
-      [firstName, lastName, phone, req.user.id]
+      `UPDATE users
+         SET first_name         = COALESCE($1, first_name),
+             last_name          = COALESCE($2, last_name),
+             phone              = COALESCE($3, phone),
+             profile_photo_url  = COALESCE($4, profile_photo_url),
+             updated_at         = NOW()
+       WHERE id = $5
+       RETURNING id, first_name, last_name, email, phone, profile_photo_url`,
+      [firstName || null, lastName || null, phone || null, photoUrl || null, req.user.id]
     );
     res.json({ success: true, data: result.rows[0] });
   } catch (err) {

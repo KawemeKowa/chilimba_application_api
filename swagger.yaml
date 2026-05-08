@@ -235,6 +235,10 @@ components:
         invite_code:
           type: string
           example: AB12CD34
+        cover_photo_url:
+          type: string
+          nullable: true
+          example: "https://lmfipdmsunabohstgixg.supabase.co/storage/v1/object/public/files/groups/uuid/cover"
         created_at:
           type: string
           format: date-time
@@ -564,6 +568,36 @@ paths:
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [firstName, lastName, email, phone, password]
+              properties:
+                firstName:
+                  type: string
+                  example: Bwalya
+                lastName:
+                  type: string
+                  example: Mwale
+                email:
+                  type: string
+                  format: email
+                  example: bwalya@example.com
+                phone:
+                  type: string
+                  example: "+260976543210"
+                password:
+                  type: string
+                  minLength: 8
+                  example: Secure@123
+                dateOfBirth:
+                  type: string
+                  format: date
+                  example: "1995-06-15"
+                photo:
+                  type: string
+                  format: binary
+                  description: Optional profile photo (JPEG / PNG / WebP / GIF — max 5 MB)
           application/json:
             schema:
               type: object
@@ -765,9 +799,23 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     patch:
       tags: [Auth]
-      summary: Update profile (firstName, lastName, phone)
+      summary: Update profile — text fields and/or profile photo
       requestBody:
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                phone:
+                  type: string
+                photo:
+                  type: string
+                  format: binary
+                  description: Profile photo (JPEG / PNG / WebP / GIF — max 5 MB)
           application/json:
             schema:
               type: object
@@ -802,6 +850,9 @@ paths:
                         type: string
                       phone:
                         type: string
+                      profile_photo_url:
+                        type: string
+                        nullable: true
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -848,6 +899,47 @@ paths:
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, monthlyAmount]
+              properties:
+                name:
+                  type: string
+                  maxLength: 150
+                  example: Lusaka North Chilimba
+                description:
+                  type: string
+                  example: Family savings group
+                monthlyAmount:
+                  type: number
+                  minimum: 1
+                  example: 500
+                maxMembers:
+                  type: integer
+                  minimum: 2
+                  maximum: 50
+                  example: 12
+                contributionDay:
+                  type: integer
+                  minimum: 1
+                  maximum: 28
+                  example: 1
+                payoutDay:
+                  type: integer
+                  minimum: 1
+                  maximum: 28
+                  example: 25
+                minApprovalsWithdrawal:
+                  type: integer
+                  example: 3
+                currency:
+                  type: string
+                  example: ZMW
+                photo:
+                  type: string
+                  format: binary
+                  description: Optional group cover photo (JPEG / PNG / WebP / GIF — max 5 MB)
           application/json:
             schema:
               type: object
@@ -1023,9 +1115,25 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       tags: [Groups]
-      summary: Update group settings (group admin only)
+      summary: Update group settings and/or cover photo (group admin only)
       requestBody:
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                allowLateContributions:
+                  type: boolean
+                lateFeeAmount:
+                  type: number
+                photo:
+                  type: string
+                  format: binary
+                  description: Group cover photo (JPEG / PNG / WebP / GIF — max 5 MB)
           application/json:
             schema:
               type: object
@@ -1034,12 +1142,10 @@ paths:
                   type: string
                 description:
                   type: string
-                contributionDay:
-                  type: integer
-                payoutDay:
-                  type: integer
-                minApprovalsWithdrawal:
-                  type: integer
+                allowLateContributions:
+                  type: boolean
+                lateFeeAmount:
+                  type: number
       responses:
         '200':
           description: Group updated

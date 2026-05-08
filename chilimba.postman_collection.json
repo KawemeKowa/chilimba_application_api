@@ -64,10 +64,18 @@
           "request": {
             "auth": { "type": "noauth" },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"firstName\": \"Bwalya\",\n  \"lastName\": \"Mwale\",\n  \"email\": \"bwalya@example.com\",\n  \"phone\": \"+260976543210\",\n  \"password\": \"Secure@123\",\n  \"dateOfBirth\": \"1995-06-15\"\n}"
+              "mode": "formdata",
+              "formdata": [
+                { "key": "firstName",   "value": "Bwalya",              "type": "text" },
+                { "key": "lastName",    "value": "Mwale",               "type": "text" },
+                { "key": "email",       "value": "bwalya@example.com",  "type": "text" },
+                { "key": "phone",       "value": "+260976543210",        "type": "text" },
+                { "key": "password",    "value": "Secure@123",           "type": "text" },
+                { "key": "dateOfBirth", "value": "1995-06-15",           "type": "text" },
+                { "key": "photo", "type": "file", "src": [], "disabled": true, "description": "Optional profile photo (JPEG/PNG/WebP/GIF, max 5 MB)" }
+              ]
             },
             "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"] }
           }
@@ -154,10 +162,15 @@
           "name": "Update Profile",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"firstName\": \"Bwalya\",\n  \"lastName\": \"Mwale\",\n  \"phone\": \"+260976543210\"\n}"
+              "mode": "formdata",
+              "formdata": [
+                { "key": "firstName", "value": "Bwalya",         "type": "text" },
+                { "key": "lastName",  "value": "Mwale",          "type": "text" },
+                { "key": "phone",     "value": "+260976543210",   "type": "text" },
+                { "key": "photo", "type": "file", "src": [], "disabled": true, "description": "Profile photo (JPEG/PNG/WebP/GIF, max 5 MB)" }
+              ]
             },
             "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
           }
@@ -197,10 +210,20 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Lusaka North Chilimba\",\n  \"description\": \"Family savings group\",\n  \"monthlyAmount\": 500,\n  \"maxMembers\": 12,\n  \"contributionDay\": 1,\n  \"payoutDay\": 25,\n  \"minApprovalsWithdrawal\": 3,\n  \"currency\": \"ZMW\"\n}"
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name",                    "value": "Lusaka North Chilimba", "type": "text" },
+                { "key": "description",             "value": "Family savings group",  "type": "text" },
+                { "key": "monthlyAmount",           "value": "500",                   "type": "text" },
+                { "key": "maxMembers",              "value": "12",                    "type": "text" },
+                { "key": "contributionDay",         "value": "1",                     "type": "text" },
+                { "key": "payoutDay",               "value": "25",                    "type": "text" },
+                { "key": "minApprovalsWithdrawal",  "value": "3",                     "type": "text" },
+                { "key": "currency",                "value": "ZMW",                   "type": "text" },
+                { "key": "photo", "type": "file", "src": [], "disabled": true, "description": "Optional group cover photo (JPEG/PNG/WebP/GIF, max 5 MB)" }
+              ]
             },
             "url": { "raw": "{{baseUrl}}/groups", "host": ["{{baseUrl}}"], "path": ["groups"] }
           }
@@ -237,10 +260,14 @@
           "name": "Update Group",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Lusaka North Chilimba Updated\",\n  \"contributionDay\": 5,\n  \"payoutDay\": 28,\n  \"minApprovalsWithdrawal\": 4\n}"
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name",        "value": "Lusaka North Chilimba Updated", "type": "text" },
+                { "key": "description", "value": "Updated group description",      "type": "text" },
+                { "key": "photo", "type": "file", "src": [], "disabled": true, "description": "Group cover photo (JPEG/PNG/WebP/GIF, max 5 MB)" }
+              ]
             },
             "url": { "raw": "{{baseUrl}}/groups/{{groupId}}", "host": ["{{baseUrl}}"], "path": ["groups", "{{groupId}}"] }
           }

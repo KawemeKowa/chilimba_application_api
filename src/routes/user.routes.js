@@ -2,13 +2,14 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const validate = require('../middleware/validate');
+const { uploadPhoto } = require('../middleware/upload');
 
 // ── auth.routes.js ──
 const authRouter = express.Router();
 const authCtrl = require('../controllers/user/auth.controller');
 const { authenticate } = require('../middleware/auth');
 
-authRouter.post('/register', [
+authRouter.post('/register', uploadPhoto, [
   body('firstName').trim().notEmpty(),
   body('lastName').trim().notEmpty(),
   body('email').isEmail().normalizeEmail(),
@@ -25,7 +26,7 @@ authRouter.post('/login', [
 authRouter.post('/refresh', body('refreshToken').notEmpty(), authCtrl.refreshToken);
 authRouter.post('/logout', authCtrl.logout);
 authRouter.get('/me', authenticate, authCtrl.getMe);
-authRouter.patch('/me', authenticate, [
+authRouter.patch('/me', authenticate, uploadPhoto, [
   body('firstName').optional().trim().notEmpty(),
   body('lastName').optional().trim().notEmpty(),
   body('phone').optional().trim().notEmpty(),
@@ -40,7 +41,7 @@ const groupsRouter = express.Router();
 const groupsCtrl = require('../controllers/user/groups.controller');
 const { requireGroupMember, requireGroupAdmin } = require('../middleware/rbac');
 
-groupsRouter.post('/', authenticate, [
+groupsRouter.post('/', authenticate, uploadPhoto, [
   body('name').trim().notEmpty().isLength({ max: 150 }),
   body('monthlyAmount').isFloat({ min: 1 }),
   body('maxMembers').optional().isInt({ min: 2, max: 50 }),
@@ -56,7 +57,7 @@ groupsRouter.get('/', authenticate, groupsCtrl.getMyGroups);
 
 groupsRouter.get('/:groupId', authenticate, requireGroupMember, groupsCtrl.getGroupDetail);
 
-groupsRouter.patch('/:groupId', authenticate, requireGroupAdmin, groupsCtrl.updateGroup);
+groupsRouter.patch('/:groupId', authenticate, requireGroupAdmin, uploadPhoto, groupsCtrl.updateGroup);
 
 groupsRouter.post('/:groupId/rotate-invite', authenticate, requireGroupAdmin, groupsCtrl.rotateInviteCode);
 

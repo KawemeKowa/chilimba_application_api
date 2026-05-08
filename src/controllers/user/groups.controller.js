@@ -5,6 +5,7 @@ const { paginate, paginatedResponse } = require('../../middleware/errorHandler')
 const slugify = require('slugify');
 const crypto = require('crypto');
 const email = require('../../services/email.service');
+const storage = require('../../services/storage.service');
 
 // Generate unique invite code
 const makeInviteCode = () => crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -48,6 +49,16 @@ const createGroup = async (req, res, next) => {
 
       return group;
     });
+
+    if (req.file) {
+      const url = await storage.uploadFile(
+        `groups/${result.id}/cover`,
+        req.file.buffer,
+        req.file.mimetype
+      );
+      await query('UPDATE groups SET cover_photo_url = $1 WHERE id = $2', [url, result.id]);
+      result.cover_photo_url = url;
+    }
 
     res.status(201).json({ success: true, data: result });
     email.sendGroupCreated(req.user, result);
@@ -189,14 +200,25 @@ const updateGroup = async (req, res, next) => {
   try {
     const { groupId } = req.params;
     const { name, description, allowLateContributions, lateFeeAmount } = req.body;
+
+    let coverPhotoUrl;
+    if (req.file) {
+      coverPhotoUrl = await storage.uploadFile(
+        `groups/${groupId}/cover`,
+        req.file.buffer,
+        req.file.mimetype
+      );
+    }
+
     const result = await query(
       `UPDATE groups SET
-         name = COALESCE($1, name),
-         description = COALESCE($2, description),
+         name                     = COALESCE($1, name),
+         description              = COALESCE($2, description),
          allow_late_contributions = COALESCE($3, allow_late_contributions),
-         late_fee_amount = COALESCE($4, late_fee_amount)
-       WHERE id = $5 RETURNING *`,
-      [name, description, allowLateContributions, lateFeeAmount, groupId]
+         late_fee_amount          = COALESCE($4, late_fee_amount),
+         cover_photo_url          = COALESCE($5, cover_photo_url)
+       WHERE id = $6 RETURNING *`,
+      [name || null, description || null, allowLateContributions ?? null, lateFeeAmount ?? null, coverPhotoUrl || null, groupId]
     );
     res.json({ success: true, data: result.rows[0] });
   } catch (err) { next(err); }
