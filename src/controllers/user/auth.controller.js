@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { query } = require('../../config/db');
+const email = require('../../services/email.service');
 
 const generateTokens = (userId, role) => {
   const accessToken = jwt.sign(
@@ -51,6 +52,7 @@ const register = async (req, res, next) => {
       message: 'Registration successful',
       data: { user, accessToken, refreshToken },
     });
+    email.sendWelcome(user);
   } catch (err) {
     next(err);
   }
@@ -193,6 +195,7 @@ const changePassword = async (req, res, next) => {
     // Revoke all refresh tokens
     await query('UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1', [req.user.id]);
     res.json({ success: true, message: 'Password updated. Please log in again.' });
+    email.sendPasswordChanged(req.user);
   } catch (err) {
     next(err);
   }

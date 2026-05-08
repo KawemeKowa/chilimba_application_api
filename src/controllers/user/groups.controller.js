@@ -4,6 +4,7 @@ const { notify, notifyGroup } = require('../../services/notification.service');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
 const slugify = require('slugify');
 const crypto = require('crypto');
+const email = require('../../services/email.service');
 
 // Generate unique invite code
 const makeInviteCode = () => crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -49,6 +50,7 @@ const createGroup = async (req, res, next) => {
     });
 
     res.status(201).json({ success: true, data: result });
+    email.sendGroupCreated(req.user, result);
   } catch (err) { next(err); }
 };
 
@@ -106,6 +108,15 @@ const joinGroup = async (req, res, next) => {
     );
 
     res.json({ success: true, message: 'Joined group successfully', data: { groupId: group.id } });
+    email.sendJoinedGroup(req.user, group);
+    query(
+      `SELECT u.email, u.first_name FROM users u
+       JOIN group_members gm ON gm.user_id = u.id
+       WHERE gm.group_id = $1 AND gm.role = 'owner' LIMIT 1`,
+      [group.id]
+    ).then(({ rows }) => {
+      if (rows.length) email.sendMemberJoined(rows[0].email, rows[0].first_name, req.user, group);
+    }).catch(() => {});
   } catch (err) { next(err); }
 };
 
@@ -207,6 +218,12 @@ const rotateInviteCode = async (req, res, next) => {
 const removeMember = async (req, res, next) => {
   try {
     const { groupId, userId } = req.params;
+
+    const [userResult, groupResult] = await Promise.all([
+      query('SELECT first_name, last_name, email FROM users WHERE id = $1', [userId]),
+      query('SELECT name FROM groups WHERE id = $1', [groupId]),
+    ]);
+
     await query(
       `UPDATE group_members SET status = 'removed', removed_at = NOW()
        WHERE group_id = $1 AND user_id = $2 AND role != 'owner'`,
@@ -214,6 +231,10 @@ const removeMember = async (req, res, next) => {
     );
     await notify(userId, 'system', 'Removed from group', 'You have been removed from the group.', { groupId });
     res.json({ success: true, message: 'Member removed' });
+
+    if (userResult.rows.length && groupResult.rows.length) {
+      email.sendMemberRemoved(userResult.rows[0], groupResult.rows[0]);
+    }
   } catch (err) { next(err); }
 };
 

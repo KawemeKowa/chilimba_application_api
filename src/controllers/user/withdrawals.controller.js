@@ -1,5 +1,6 @@
 const { query, withTransaction } = require('../../config/db');
 const { notifyGroup, notify } = require('../../services/notification.service');
+const email = require('../../services/email.service');
 
 // POST /api/groups/:groupId/withdrawals
 const createWithdrawalRequest = async (req, res, next) => {
@@ -36,6 +37,17 @@ const createWithdrawalRequest = async (req, res, next) => {
     );
 
     res.status(201).json({ success: true, data: withdrawal });
+
+    query(
+      `SELECT u.email, u.first_name, u.last_name FROM users u
+       JOIN group_members gm ON gm.user_id = u.id
+       WHERE gm.group_id = $1 AND gm.status = 'active' AND gm.user_id != $2`,
+      [groupId, req.user.id]
+    ).then(({ rows }) => {
+      for (const member of rows) {
+        email.sendWithdrawalRequested(member.email, member.first_name, req.user, withdrawal, group.rows[0]);
+      }
+    }).catch(() => {});
   } catch (err) { next(err); }
 };
 
@@ -77,6 +89,8 @@ const voteOnWithdrawal = async (req, res, next) => {
     if (!['approved', 'rejected'].includes(action)) {
       return res.status(400).json({ success: false, message: 'Action must be approved or rejected' });
     }
+
+    let outcomeData = null;
 
     await withTransaction(async (client) => {
       const wrResult = await client.query(
@@ -137,8 +151,23 @@ const voteOnWithdrawal = async (req, res, next) => {
           `Your withdrawal request of ZMW ${wr.amount} has been ${newStatus}.`,
           { withdrawalId }
         );
+        outcomeData = { requestedBy: wr.requested_by, withdrawal: updatedWr, status: newStatus, groupName: wr.group_name };
       }
     });
+
+    if (outcomeData) {
+      query('SELECT first_name, last_name, email FROM users WHERE id = $1', [outcomeData.requestedBy])
+        .then(({ rows }) => {
+          if (rows.length) {
+            email.sendWithdrawalOutcome(
+              rows[0],
+              outcomeData.withdrawal,
+              outcomeData.status,
+              { name: outcomeData.groupName, id: outcomeData.withdrawal.group_id }
+            );
+          }
+        }).catch(() => {});
+    }
 
     res.json({ success: true, message: 'Vote recorded' });
   } catch (err) { next(err); }

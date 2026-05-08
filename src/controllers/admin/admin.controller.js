@@ -2,6 +2,7 @@ const { query, withTransaction } = require('../../config/db');
 const { disbursePayout } = require('../../services/chilimba.service');
 const { notify, notifyGroup } = require('../../services/notification.service');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
+const email = require('../../services/email.service');
 
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
@@ -67,6 +68,11 @@ const updateUserStatus = async (req, res, next) => {
       return res.status(400).json({ success: false, message: `Status must be one of: ${valid.join(', ')}` });
     }
 
+    const userResult = await query(
+      'SELECT first_name, last_name, email FROM users WHERE id = $1',
+      [req.params.userId]
+    );
+
     await query('UPDATE users SET status = $1 WHERE id = $2', [status, req.params.userId]);
 
     await query(
@@ -81,12 +87,21 @@ const updateUserStatus = async (req, res, next) => {
 
     await notify(req.params.userId, 'system', 'Account Status Update', `Your account has been ${status}.`, { reason });
     res.json({ success: true, message: `User ${status}` });
+
+    if (userResult.rows.length && status !== 'active') {
+      email.sendAccountStatusChanged(userResult.rows[0], status, reason);
+    }
   } catch (err) { next(err); }
 };
 
 // POST /api/admin/users/:userId/verify
 const verifyUser = async (req, res, next) => {
   try {
+    const userResult = await query(
+      'SELECT first_name, last_name, email FROM users WHERE id = $1',
+      [req.params.userId]
+    );
+
     await query(
       'UPDATE users SET id_verified = TRUE, status = $1 WHERE id = $2',
       ['active', req.params.userId]
@@ -97,6 +112,8 @@ const verifyUser = async (req, res, next) => {
       [req.user.id, req.params.userId, req.ip]
     );
     res.json({ success: true, message: 'User verified and activated' });
+
+    if (userResult.rows.length) email.sendAccountVerified(userResult.rows[0]);
   } catch (err) { next(err); }
 };
 
@@ -175,6 +192,13 @@ const processPayoutDisbursement = async (req, res, next) => {
       message: 'Payout disbursed',
       data: { netPayout: result.netPayout, feeCharged: result.feeCharged }
     });
+
+    query('SELECT first_name, last_name, email FROM users WHERE id = $1', [result.payout.user_id])
+      .then(({ rows }) => {
+        if (rows.length) {
+          email.sendPayoutDisbursed(rows[0], result.payout, { name: result.payout.group_name, id: result.payout.group_id });
+        }
+      }).catch(() => {});
   } catch (err) { next(err); }
 };
 

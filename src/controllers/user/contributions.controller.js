@@ -1,6 +1,7 @@
 const { query } = require('../../config/db');
 const { recordContribution } = require('../../services/chilimba.service');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
+const email = require('../../services/email.service');
 
 // GET /api/groups/:groupId/contributions
 const getGroupContributions = async (req, res, next) => {
@@ -99,6 +100,7 @@ const payContribution = async (req, res, next) => {
         netAmount: result.netAmount,
       }
     });
+    email.sendContributionPaid(req.user, result.contribution, { name: result.contribution.group_name });
   } catch (err) { next(err); }
 };
 
