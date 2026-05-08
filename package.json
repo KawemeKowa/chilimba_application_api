@@ -10,6 +10,7 @@
     "seed": "node src/scripts/seed.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.105.3",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
@@ -26,7 +27,8 @@
     "slugify": "^1.6.6",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^9.0.0",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
