@@ -19,7 +19,23 @@ const { adminRouter, superAdminRouter } = require('./routes/admin.routes');
 const app = express();
 
 // ─── SECURITY MIDDLEWARE ──────────────────────────────────────────────────────
-app.use(helmet());
+// Docs pages load scripts/styles from unpkg CDN — relax CSP for that path only
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api-docs') || req.path === '/swagger.yaml') {
+    return helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc:  ["'self'"],
+          scriptSrc:   ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+          styleSrc:    ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+          connectSrc:  ["'self'", 'https://unpkg.com'],
+          imgSrc:      ["'self'", 'data:', 'https:'],
+        },
+      },
+    })(req, res, next);
+  }
+  helmet()(req, res, next);
+});
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
