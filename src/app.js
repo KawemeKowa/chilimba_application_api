@@ -5,8 +5,6 @@ const cors = require('cors');
 const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const swaggerUi = require('swagger-ui-express');
-const yaml = require('js-yaml');
 const fs = require('fs');
 const path = require('path');
 
@@ -21,12 +19,7 @@ const { adminRouter, superAdminRouter } = require('./routes/admin.routes');
 const app = express();
 
 // ─── SECURITY MIDDLEWARE ──────────────────────────────────────────────────────
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api-docs')) {
-    return helmet({ contentSecurityPolicy: false })(req, res, next);
-  }
-  helmet()(req, res, next);
-});
+app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
@@ -64,17 +57,41 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 
 // ─── SWAGGER DOCS (public) ────────────────────────────────────────────────────
-const swaggerDocument = yaml.load(
-  fs.readFileSync(path.join(__dirname, '..', 'swagger.yaml'), 'utf8')
-);
+// Serve raw spec — referenced by the UI below
 app.get('/swagger.yaml', (req, res) => {
   res.setHeader('Content-Type', 'application/yaml');
   res.sendFile(path.join(__dirname, '..', 'swagger.yaml'));
 });
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
-  customSiteTitle: 'Chilimba API Docs',
-  swaggerOptions: { persistAuthorization: true },
-}));
+
+// CDN-based Swagger UI — no local static files, works on Vercel / any serverless host
+const SWAGGER_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chilimba API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"/>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+  <script>
+    window.onload = () => {
+      SwaggerUIBundle({
+        url: '/swagger.yaml',
+        dom_id: '#swagger-ui',
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        layout: 'StandaloneLayout',
+        persistAuthorization: true,
+      });
+    };
+  </script>
+</body>
+</html>`;
+
+app.get('/api-docs', (req, res) => res.send(SWAGGER_HTML));
+app.get('/api-docs/', (req, res) => res.send(SWAGGER_HTML));
 
 // ─── HEALTH CHECK (public) ────────────────────────────────────────────────────
 app.get(['/health', '/api/health'], (req, res) => {
