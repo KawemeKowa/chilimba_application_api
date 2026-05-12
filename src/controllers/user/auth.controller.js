@@ -20,14 +20,6 @@ const register = async (req, res, next) => {
   try {
     const { firstName, lastName, email, phone, password, dateOfBirth } = req.body;
 
-    // Age check (>= 16)
-    if (dateOfBirth) {
-      const age = (Date.now() - new Date(dateOfBirth)) / (365.25 * 24 * 60 * 60 * 1000);
-      if (age < 16) {
-        return res.status(400).json({ success: false, message: 'Must be at least 16 years old' });
-      }
-    }
-
     const passwordHash = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
 
     const result = await query(

@@ -563,7 +563,7 @@ paths:
   /auth/register:
     post:
       tags: [Auth]
-      summary: Register a new user (must be ≥ 16 years old)
+      summary: Register a new user
       security: []
       requestBody:
         required: true
@@ -645,12 +645,14 @@ paths:
                         $ref: '#/components/schemas/User'
                       accessToken:
                         type: string
-                        description: JWT — expires in 15 minutes
+                        description: JWT — expires in 30 minutes
+                        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIzZmE4NWY2NC01NzE3LTQ1NjItYjNmYy0yYzk2M2Y2NmFmYTYiLCJyb2xlIjoibWVtYmVyIiwiaWF0IjoxNzE2MDE2MDAwLCJleHAiOjE3MTYwMTc4MDB9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
                       refreshToken:
                         type: string
                         description: Opaque token — expires in 7 days
+                        example: a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2
         '400':
-          description: Under 16 years old or duplicate email/phone
+          description: Duplicate email or phone
           content:
             application/json:
               schema:
@@ -698,10 +700,12 @@ paths:
                         $ref: '#/components/schemas/User'
                       accessToken:
                         type: string
-                        description: JWT — expires in 15 minutes
+                        description: JWT — expires in 30 minutes
+                        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIzZmE4NWY2NC01NzE3LTQ1NjItYjNmYy0yYzk2M2Y2NmFmYTYiLCJyb2xlIjoibWVtYmVyIiwiaWF0IjoxNzE2MDE2MDAwLCJleHAiOjE3MTYwMTc4MDB9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
                       refreshToken:
                         type: string
                         description: Opaque token — expires in 7 days
+                        example: a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2
         '401':
           description: Invalid credentials
           content:
