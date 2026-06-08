@@ -1,13 +1,14 @@
 const logger = require('../config/logger');
 
 const errorHandler = (err, req, res, next) => {
-  logger.error({
-    message: err.message,
+  logger.error(JSON.stringify({
+    message: err.message || String(err),
+    code: err.code,
     stack: err.stack,
     method: req.method,
     url: req.originalUrl,
     userId: req.user?.id,
-  });
+  }));
 
   if (err.code === '23505') {
     // Postgres unique violation
