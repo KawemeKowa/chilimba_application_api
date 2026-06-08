@@ -4,6 +4,8 @@ dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 const { Pool } = require('pg');
 
+const isRemote = (process.env.DB_HOST || 'localhost') !== 'localhost';
+
 const pool = new Pool({
   host:             process.env.DB_HOST     || 'localhost',
   port:             parseInt(process.env.DB_PORT || '5432'),
@@ -13,6 +15,7 @@ const pool = new Pool({
   max:              parseInt(process.env.DB_POOL_MAX || '20'),
   idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '30000'),
   connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT || '2000'),
+  ssl: isRemote ? { rejectUnauthorized: false } : false,
 });
 
 pool.on('error', (err) => {
