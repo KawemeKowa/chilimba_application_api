@@ -130,7 +130,7 @@ app.use('/api/groups',        groupsRouter);
 app.use('/api/contributions', contribRouter);
 app.use('/api/withdrawals',   withdrawalsRouter);
 app.use('/api/committees',    committeeRouter);
-app.use('/api',               miscRouter);   // wallet, notifications, messages
+app.use('/api',               miscRouter);  
 
 // ─── ADMIN API ROUTES ─────────────────────────────────────────────────────────
 app.use('/api/admin',         adminRouter);
