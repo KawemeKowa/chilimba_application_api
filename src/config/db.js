@@ -4,21 +4,24 @@ dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 const { Pool } = require('pg');
 
-const sslConfig = process.env.DB_SSL === 'true'
-  ? { rejectUnauthorized: false }
-  : false;
-
-const pool = new Pool({
-  host:             process.env.DB_HOST     || 'localhost',
-  port:             parseInt(process.env.DB_PORT || '5432'),
-  database:         process.env.DB_NAME     || 'chilimba_db',
-  user:             process.env.DB_USER     || 'chilimba_user',
-  password:         process.env.DB_PASSWORD || '',
-  max:              parseInt(process.env.DB_POOL_MAX || '20'),
-  idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '30000'),
-  connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT || '10000'),
-  ssl: sslConfig,
-});
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+      max: parseInt(process.env.DB_POOL_MAX || '10'),
+      idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '30000'),
+      connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT || '10000'),
+    })
+  : new Pool({
+      host:     process.env.DB_HOST     || 'localhost',
+      port:     parseInt(process.env.DB_PORT || '5432'),
+      database: process.env.DB_NAME     || 'chilimba_db',
+      user:     process.env.DB_USER     || 'chilimba_user',
+      password: process.env.DB_PASSWORD || '',
+      max:      parseInt(process.env.DB_POOL_MAX || '20'),
+      idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '30000'),
+      connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT || '10000'),
+    });
 
 pool.on('error', (err) => {
   console.error('Unexpected PostgreSQL pool error:', err);
