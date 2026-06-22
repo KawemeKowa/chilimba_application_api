@@ -377,12 +377,14 @@ const getInvitation = async (req, res, next) => {
     if (inv.status !== 'pending' || new Date(inv.expires_at) < new Date()) {
       return res.status(410).json({ success: false, message: 'This invitation has expired or already been used.' });
     }
+    const userCheck = await query('SELECT id FROM users WHERE email = $1', [inv.email]);
     res.json({
       success: true, data: {
         token: inv.token,
         email: inv.email,
         status: inv.status,
         expiresAt: inv.expires_at,
+        userExists: userCheck.rows.length > 0,
         group: {
           id: inv.group_id,
           name: inv.group_name,
