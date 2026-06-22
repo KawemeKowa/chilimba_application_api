@@ -405,7 +405,10 @@ const acceptInvitation = async (req, res, next) => {
   try {
     const { token } = req.params;
     const result = await query(
-      `SELECT gi.*, g.* FROM group_invitations gi
+      `SELECT gi.id, gi.token, gi.group_id, gi.invited_by, gi.email,
+              gi.status AS invitation_status, gi.expires_at,
+              g.name, g.status AS group_status
+       FROM group_invitations gi
        JOIN groups g ON g.id = gi.group_id
        WHERE gi.token = $1`,
       [token]
@@ -414,7 +417,7 @@ const acceptInvitation = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Invitation not found.' });
     }
     const inv = result.rows[0];
-    if (inv.status !== 'pending' || new Date(inv.expires_at) < new Date()) {
+    if (inv.invitation_status !== 'pending' || new Date(inv.expires_at) < new Date()) {
       return res.status(410).json({ success: false, message: 'This invitation has expired or already been used.' });
     }
 
