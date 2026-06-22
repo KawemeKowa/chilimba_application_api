@@ -44,9 +44,10 @@ const { requireGroupMember, requireGroupAdmin } = require('../middleware/rbac');
 groupsRouter.post('/', authenticate, uploadPhoto, [
   body('name').trim().notEmpty().isLength({ max: 150 }),
   body('monthlyAmount').isFloat({ min: 1 }),
-  body('maxMembers').optional().isInt({ min: 2, max: 50 }),
+  body('maxMembers').optional().isInt({ min: 2, max: 5000 }),
   body('contributionDay').optional().isInt({ min: 1, max: 28 }),
   body('payoutDay').optional().isInt({ min: 1, max: 28 }),
+  body('currency').optional().isIn(['ZMW', 'USD', 'EUR', 'GBP', 'ZAR']),
 ], groupsCtrl.createGroup);
 
 groupsRouter.post('/join', authenticate, [
@@ -64,6 +65,15 @@ groupsRouter.post('/:groupId/rotate-invite', authenticate, requireGroupAdmin, gr
 groupsRouter.get('/:groupId/payout-schedule', authenticate, requireGroupMember, groupsCtrl.getPayoutSchedule);
 
 groupsRouter.delete('/:groupId/members/:userId', authenticate, requireGroupAdmin, groupsCtrl.removeMember);
+
+// Email invitations — static paths must come before /:groupId
+groupsRouter.get('/invitations/:token', groupsCtrl.getInvitation);
+groupsRouter.post('/invitations/:token/accept', authenticate, groupsCtrl.acceptInvitation);
+groupsRouter.post('/invitations/:token/decline', groupsCtrl.declineInvitation);
+
+groupsRouter.post('/:groupId/invite', authenticate, requireGroupAdmin, [
+  body('email').isEmail().normalizeEmail(),
+], validate, groupsCtrl.inviteMember);
 
 // ── contributions.routes.js ──
 const contribRouter = express.Router();

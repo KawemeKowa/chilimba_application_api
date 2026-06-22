@@ -1,16 +1,21 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
-const { createClient } = require('@supabase/supabase-js');
+const { Pool } = require('pg');
 
-// Uses the Supabase REST API over HTTPS — works even when direct PostgreSQL
-// connections are blocked (e.g. no IPv6 connectivity in the Africa region).
-// Node 20 needs ws passed explicitly (native WebSocket only in Node 22+).
-const ws = require('ws');
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,  // service role bypasses RLS
-  { realtime: { transport: ws } }
-);
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    })
+  : new Pool({
+      host:     process.env.DB_HOST     || 'localhost',
+      port:     parseInt(process.env.DB_PORT || '5432'),
+      database: process.env.DB_NAME     || 'chilimba_db',
+      user:     process.env.DB_USER     || 'chilimba_user',
+      password: process.env.DB_PASSWORD || '',
+    });
+
+const q = (text, params) => pool.query(text, params);
 
 // ─── Seed data ────────────────────────────────────────────────────────────────
 
@@ -55,28 +60,6 @@ const USERS = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function upsert(table, rows, onConflict) {
-  const { data, error } = await supabase
-    .from(table)
-    .upsert(rows, { onConflict, ignoreDuplicates: false })
-    .select();
-  if (error) throw new Error(`[${table}] ${error.message}`);
-  return data;
-}
-
-async function insertIfAbsent(table, rows, matchCol) {
-  for (const row of rows) {
-    const { data: existing } = await supabase
-      .from(table)
-      .select('id')
-      .eq(matchCol, row[matchCol])
-      .maybeSingle();
-    if (existing) continue;
-    const { error } = await supabase.from(table).insert(row);
-    if (error) throw new Error(`[${table}] ${error.message}`);
-  }
-}
-
 function monthFromNow(n) {
   const d = new Date();
   d.setMonth(d.getMonth() + n);
@@ -93,47 +76,41 @@ function startOfThisMonth() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function seed() {
-  console.log('🌱 Seeding Chilimba database via Supabase REST API...\n');
+  console.log('🌱 Seeding Chilimba database via pg (Railway PostgreSQL)...\n');
 
   // ── 1. Users ─────────────────────────────────────────────────────────────
-  const userRows = [];
+  const uid = {};
   for (const u of USERS) {
     const password_hash = await bcrypt.hash(u.password, 10);
-    userRows.push({
-      first_name: u.first_name,
-      last_name:  u.last_name,
-      email:      u.email,
-      phone:      u.phone,
-      password_hash,
-      role:         u.role,
-      status:       u.status,
-      id_verified:  u.id_verified,
-      date_of_birth: u.date_of_birth,
-    });
+    const { rows } = await q(
+      `INSERT INTO users
+         (first_name, last_name, email, phone, password_hash, role, status, id_verified, date_of_birth)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (email) DO UPDATE SET
+         first_name    = EXCLUDED.first_name,
+         last_name     = EXCLUDED.last_name,
+         phone         = EXCLUDED.phone,
+         password_hash = EXCLUDED.password_hash,
+         role          = EXCLUDED.role,
+         status        = EXCLUDED.status,
+         id_verified   = EXCLUDED.id_verified,
+         date_of_birth = EXCLUDED.date_of_birth
+       RETURNING id, email`,
+      [u.first_name, u.last_name, u.email, u.phone, password_hash,
+       u.role, u.status, u.id_verified, u.date_of_birth]
+    );
+    uid[rows[0].email] = rows[0].id;
   }
-
-  const insertedUsers = await upsert('users', userRows, 'email');
-  console.log(`  ✅ ${insertedUsers.length} users upserted`);
-
-  // Build email → id map
-  const uid = {};
-  for (const u of insertedUsers) uid[u.email] = u.id;
+  console.log(`  ✅ ${USERS.length} users upserted`);
 
   // ── 2. Personal wallets ───────────────────────────────────────────────────
-  for (const [email, id] of Object.entries(uid)) {
-    const { data: existing } = await supabase
-      .from('wallets')
-      .select('id')
-      .eq('owner_id', id)
-      .eq('type', 'personal')
-      .is('group_id', null)
-      .maybeSingle();
-    if (!existing) {
-      const { error } = await supabase
-        .from('wallets')
-        .insert({ owner_id: id, type: 'personal', balance: 0, currency: 'ZMW' });
-      if (error) throw new Error(`[wallets:personal:${email}] ${error.message}`);
-    }
+  for (const id of Object.values(uid)) {
+    await q(
+      `INSERT INTO wallets (owner_id, type, balance, currency)
+       VALUES ($1, 'personal', 0, 'ZMW')
+       ON CONFLICT DO NOTHING`,
+      [id]
+    );
   }
   console.log('  ✅ Personal wallets ready');
 
@@ -142,99 +119,52 @@ async function seed() {
   const MONTHLY = 500;
   const MEMBER_EMAILS = ['bwalya@example.com', 'mwansa@example.com', 'chipo@example.com'];
 
-  let groupId;
-  const { data: existingGroup } = await supabase
-    .from('groups')
-    .select('id')
-    .eq('slug', 'lusaka-north-chilimba')
-    .maybeSingle();
-
-  if (existingGroup) {
-    groupId = existingGroup.id;
-  } else {
-    const { data: newGroup, error } = await supabase
-      .from('groups')
-      .insert({
-        name: 'Lusaka North Chilimba',
-        description: 'Community savings group for Lusaka North residents',
-        slug: 'lusaka-north-chilimba',
-        status: 'active',
-        monthly_amount: MONTHLY,
-        currency: 'ZMW',
-        max_members: 6,
-        contribution_day: 1,
-        payout_day: 25,
-        min_approvals_withdrawal: 2,
-        invite_code: 'DEMO1234',
-        created_by: ownerId,
-      })
-      .select()
-      .single();
-    if (error) throw new Error(`[groups] ${error.message}`);
-    groupId = newGroup.id;
-  }
+  const { rows: groupRows } = await q(
+    `INSERT INTO groups
+       (name, description, slug, status, monthly_amount, currency,
+        max_members, contribution_day, payout_day,
+        min_approvals_withdrawal, invite_code, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+     RETURNING id`,
+    [
+      'Lusaka North Chilimba',
+      'Community savings group for Lusaka North residents',
+      'lusaka-north-chilimba', 'active', MONTHLY, 'ZMW',
+      6, 1, 25, 2, 'DEMO1234', ownerId,
+    ]
+  );
+  const groupId = groupRows[0].id;
   console.log(`  ✅ Demo group ready  →  invite code: DEMO1234`);
 
   // ── 4. Group wallet ───────────────────────────────────────────────────────
-  const { data: existingGW } = await supabase
-    .from('wallets')
-    .select('id')
-    .eq('owner_id', ownerId)
-    .eq('type', 'group')
-    .eq('group_id', groupId)
-    .maybeSingle();
-  if (!existingGW) {
-    const { error } = await supabase
-      .from('wallets')
-      .insert({ owner_id: ownerId, type: 'group', group_id: groupId, balance: 0, currency: 'ZMW' });
-    if (error) throw new Error(`[wallets:group] ${error.message}`);
-  }
+  await q(
+    `INSERT INTO wallets (owner_id, type, group_id, balance, currency)
+     VALUES ($1, 'group', $2, 0, 'ZMW')
+     ON CONFLICT DO NOTHING`,
+    [ownerId, groupId]
+  );
 
   // ── 5. Group members + payout schedule ───────────────────────────────────
   for (let i = 0; i < MEMBER_EMAILS.length; i++) {
-    const memberId   = uid[MEMBER_EMAILS[i]];
+    const memberId    = uid[MEMBER_EMAILS[i]];
     const payoutOrder = i + 1;
-    const role       = i === 0 ? 'owner' : 'member';
+    const role        = i === 0 ? 'owner' : 'member';
 
-    const { data: existingMember } = await supabase
-      .from('group_members')
-      .select('id')
-      .eq('group_id', groupId)
-      .eq('user_id', memberId)
-      .maybeSingle();
+    await q(
+      `INSERT INTO group_members (group_id, user_id, role, status, payout_order, joined_at)
+       VALUES ($1,$2,$3,'active',$4,NOW())
+       ON CONFLICT (group_id, user_id) DO NOTHING`,
+      [groupId, memberId, role, payoutOrder]
+    );
 
-    if (!existingMember) {
-      const { error } = await supabase.from('group_members').insert({
-        group_id: groupId,
-        user_id:  memberId,
-        role,
-        status:       'active',
-        payout_order: payoutOrder,
-        joined_at:    new Date().toISOString(),
-      });
-      if (error) throw new Error(`[group_members] ${error.message}`);
-    }
-
-    const { data: existingPS } = await supabase
-      .from('payout_schedule')
-      .select('id')
-      .eq('group_id', groupId)
-      .eq('cycle_number', 1)
-      .eq('payout_order', payoutOrder)
-      .maybeSingle();
-
-    if (!existingPS) {
-      const { error } = await supabase.from('payout_schedule').insert({
-        group_id:        groupId,
-        user_id:         memberId,
-        cycle_number:    1,
-        payout_order:    payoutOrder,
-        scheduled_date:  monthFromNow(payoutOrder),
-        expected_amount: MONTHLY * MEMBER_EMAILS.length,
-        status:          'scheduled',
-      });
-      if (error) throw new Error(`[payout_schedule] ${error.message}`);
-    }
+    await q(
+      `INSERT INTO payout_schedule
+         (group_id, user_id, cycle_number, payout_order, scheduled_date, expected_amount, status)
+       VALUES ($1,$2,1,$3,$4,$5,'scheduled')
+       ON CONFLICT DO NOTHING`,
+      [groupId, memberId, payoutOrder, monthFromNow(payoutOrder), MONTHLY * MEMBER_EMAILS.length]
+    );
   }
   console.log(`  ✅ ${MEMBER_EMAILS.length} members + payout schedule (cycle 1)`);
 
@@ -244,124 +174,97 @@ async function seed() {
     const memberId = uid[MEMBER_EMAILS[i]];
     const paid     = i === 0; // Bwalya already paid
 
-    const { data: existingC } = await supabase
-      .from('contributions')
-      .select('id')
-      .eq('group_id', groupId)
-      .eq('user_id', memberId)
-      .eq('cycle_number', 1)
-      .eq('round_number', 1)
-      .maybeSingle();
-
-    if (!existingC) {
-      const { error } = await supabase.from('contributions').insert({
-        group_id:     groupId,
-        user_id:      memberId,
-        cycle_number: 1,
-        round_number: 1,
-        amount_due:   MONTHLY,
-        amount_paid:  paid ? MONTHLY : 0,
-        status:       paid ? 'paid' : 'pending',
-        due_date:     dueDate,
-        paid_at:      paid ? new Date().toISOString() : null,
-      });
-      if (error) throw new Error(`[contributions] ${error.message}`);
-    }
+    await q(
+      `INSERT INTO contributions
+         (group_id, user_id, cycle_number, round_number,
+          amount_due, amount_paid, status, due_date, paid_at)
+       VALUES ($1,$2,1,1,$3,$4,$5,$6,$7)
+       ON CONFLICT DO NOTHING`,
+      [
+        groupId, memberId, MONTHLY,
+        paid ? MONTHLY : 0,
+        paid ? 'paid' : 'pending',
+        dueDate,
+        paid ? new Date().toISOString() : null,
+      ]
+    );
   }
   console.log('  ✅ Contributions seeded  (Bwalya: paid, others: pending)');
 
   // ── 7. Ledger transaction for Bwalya's paid contribution ─────────────────
-  const { data: bwalyaWallet } = await supabase
-    .from('wallets')
-    .select('id')
-    .eq('owner_id', uid['bwalya@example.com'])
-    .eq('type', 'personal')
-    .is('group_id', null)
-    .maybeSingle();
+  const { rows: walletRows } = await q(
+    `SELECT id FROM wallets
+     WHERE owner_id = $1 AND type = 'personal' AND group_id IS NULL
+     LIMIT 1`,
+    [uid['bwalya@example.com']]
+  );
 
-  if (bwalyaWallet) {
-    const { data: existingTxn } = await supabase
-      .from('transactions')
-      .select('id')
-      .eq('wallet_id', bwalyaWallet.id)
-      .eq('reference_type', 'contribution')
-      .maybeSingle();
-
-    if (!existingTxn) {
-      const { error } = await supabase.from('transactions').insert({
-        wallet_id:      bwalyaWallet.id,
-        type:           'contribution',
-        direction:      'debit',
-        amount:         MONTHLY,
-        balance_before: 0,
-        balance_after:  0,
-        status:         'completed',
-        reference_type: 'contribution',
-        description:    'Cycle 1 Round 1 — Lusaka North Chilimba',
-      });
-      if (error) throw new Error(`[transactions] ${error.message}`);
+  if (walletRows.length) {
+    const walletId = walletRows[0].id;
+    const { rows: txnRows } = await q(
+      `SELECT id FROM transactions
+       WHERE wallet_id = $1 AND reference_type = 'contribution'
+       LIMIT 1`,
+      [walletId]
+    );
+    if (!txnRows.length) {
+      await q(
+        `INSERT INTO transactions
+           (wallet_id, type, direction, amount, balance_before, balance_after,
+            status, reference_type, description)
+         VALUES ($1,'contribution','debit',$2,0,0,'completed','contribution',$3)`,
+        [walletId, MONTHLY, 'Cycle 1 Round 1 — Lusaka North Chilimba']
+      );
     }
   }
   console.log('  ✅ Ledger transaction recorded for Bwalya');
 
   // ── 8. Committee pool ─────────────────────────────────────────────────────
-  const { data: existingPool } = await supabase
-    .from('committee_pools')
-    .select('id')
-    .eq('group_id', groupId)
-    .eq('title', 'Funeral Support — Mama Banda')
-    .maybeSingle();
-
-  if (!existingPool) {
-    const { error } = await supabase.from('committee_pools').insert({
-      group_id:     groupId,
-      created_by:   ownerId,
-      title:        'Funeral Support — Mama Banda',
-      description:  'Contributions to support the Banda family during this difficult time.',
-      category:     'funeral',
-      target_amount: 10000,
-      status:       'active',
-    });
-    if (error) throw new Error(`[committee_pools] ${error.message}`);
-  }
+  await q(
+    `INSERT INTO committee_pools
+       (group_id, created_by, title, description, category, target_amount, status)
+     VALUES ($1,$2,$3,$4,'funeral',10000,'active')
+     ON CONFLICT DO NOTHING`,
+    [
+      groupId, ownerId,
+      'Funeral Support — Mama Banda',
+      'Contributions to support the Banda family during this difficult time.',
+    ]
+  );
   console.log('  ✅ Committee pool  →  Funeral Support — Mama Banda');
 
   // ── 9. Welcome message ────────────────────────────────────────────────────
-  const { data: existingMsg } = await supabase
-    .from('group_messages')
-    .select('id')
-    .eq('group_id', groupId)
-    .eq('user_id', ownerId)
-    .maybeSingle();
-
-  if (!existingMsg) {
-    const { error } = await supabase.from('group_messages').insert({
-      group_id: groupId,
-      user_id:  ownerId,
-      content:  'Welcome to Lusaka North Chilimba! Contributions are due on the 1st of each month. 🎉',
-    });
-    if (error) throw new Error(`[group_messages] ${error.message}`);
+  const { rows: msgRows } = await q(
+    `SELECT id FROM group_messages WHERE group_id = $1 AND user_id = $2 LIMIT 1`,
+    [groupId, ownerId]
+  );
+  if (!msgRows.length) {
+    await q(
+      `INSERT INTO group_messages (group_id, user_id, content)
+       VALUES ($1,$2,$3)`,
+      [groupId, ownerId, 'Welcome to Lusaka North Chilimba! Contributions are due on the 1st of each month. 🎉']
+    );
   }
   console.log('  ✅ Welcome message posted');
 
   // ── 10. Contribution reminder notifications ───────────────────────────────
   for (const email of MEMBER_EMAILS) {
     const memberId = uid[email];
-    const { data: existingN } = await supabase
-      .from('notifications')
-      .select('id')
-      .eq('user_id', memberId)
-      .eq('type', 'contribution_reminder')
-      .maybeSingle();
-
-    if (!existingN) {
-      const { error } = await supabase.from('notifications').insert({
-        user_id: memberId,
-        type:    'contribution_reminder',
-        title:   'Contribution Due',
-        body:    'Your ZMW 500 contribution for Lusaka North Chilimba is due on the 1st.',
-      });
-      if (error) throw new Error(`[notifications] ${error.message}`);
+    const { rows: notifRows } = await q(
+      `SELECT id FROM notifications
+       WHERE user_id = $1 AND type = 'contribution_reminder' LIMIT 1`,
+      [memberId]
+    );
+    if (!notifRows.length) {
+      await q(
+        `INSERT INTO notifications (user_id, type, title, body)
+         VALUES ($1,'contribution_reminder',$2,$3)`,
+        [
+          memberId,
+          'Contribution Due',
+          'Your ZMW 500 contribution for Lusaka North Chilimba is due on the 1st.',
+        ]
+      );
     }
   }
   console.log('  ✅ Contribution reminder notifications sent');
@@ -389,9 +292,11 @@ async function seed() {
   ⚠️  Change admin passwords immediately in production!
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `);
+
+  await pool.end();
 }
 
 seed().catch(err => {
   console.error('\n❌ Seed failed:', err.message);
-  process.exit(1);
+  pool.end().finally(() => process.exit(1));
 });

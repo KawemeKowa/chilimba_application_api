@@ -14,7 +14,7 @@ const transporter = nodemailer.createTransport({
 });
 
 const FROM = process.env.MAIL_FROM || 'Chilimba <noreply@chilimba.app>';
-const APP_URL = process.env.FRONTEND_URL || 'http://localhost:3001';
+const APP_URL = (process.env.FRONTEND_URL || 'http://localhost:3001').split(',')[0].trim();
 
 // ─── Base layout ─────────────────────────────────────────────────────────────
 
@@ -366,6 +366,27 @@ async function sendCommitteePoolCreated(memberEmail, memberName, pool, group, cr
   await send(memberEmail, `New committee pool: "${pool.title}" in ${group.name}`, html);
 }
 
+// ─── 14. Group email invitation ───────────────────────────────────────────────
+
+async function sendGroupInvitation(inviterUser, inviteeEmail, group, inviteToken) {
+  const acceptLink = `${APP_URL}/invitations/${inviteToken}`;
+  const html = layout('You\'ve been invited to join a Chilimba group', `
+    ${h1('You\'re invited to join a savings group 🎉')}
+    ${p(`<strong>${inviterUser.first_name} ${inviterUser.last_name}</strong> has invited you to join their Chilimba savings group.`)}
+    ${infoBox([
+      ['Group',          group.name],
+      ['Monthly Amount', `ZMW ${group.monthly_amount}`],
+      ['Max Members',    group.max_members],
+      ['Payout Day',     `${group.payout_day}th of each month`],
+    ])}
+    ${group.description ? p(group.description) : ''}
+    ${btn('Accept Invitation', acceptLink)}
+    ${p('This invitation expires in <strong>7 days</strong>. If you did not expect this email you can safely ignore it.')}
+    ${p(`<small style="color:#9ca3af">Or copy this link: ${acceptLink}</small>`)}
+  `);
+  await send(inviteeEmail, `${inviterUser.first_name} invited you to join "${group.name}" on Chilimba`, html);
+}
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function ordinal(n) {
@@ -393,4 +414,5 @@ module.exports = {
   sendAccountVerified,
   sendAccountStatusChanged,
   sendCommitteePoolCreated,
+  sendGroupInvitation,
 };

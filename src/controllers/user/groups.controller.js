@@ -10,6 +10,50 @@ const storage = require('../../services/storage.service');
 // Generate unique invite code
 const makeInviteCode = () => crypto.randomBytes(4).toString('hex').toUpperCase();
 
+// Map DB snake_case to camelCase for group rows
+function normalizeGroup(g) {
+  return {
+    id: g.id,
+    name: g.name,
+    description: g.description,
+    slug: g.slug,
+    status: g.status,
+    monthlyAmount: g.monthly_amount,
+    currency: g.currency,
+    maxMembers: g.max_members,
+    memberCount: parseInt(g.active_members ?? g.member_count ?? 0),
+    currentCycle: g.current_cycle,
+    contributionDay: g.contribution_day,
+    payoutDay: g.payout_day,
+    minApprovalsWithdrawal: g.min_approvals_withdrawal,
+    allowLateContributions: g.allow_late_contributions,
+    lateFeeAmount: g.late_fee_amount,
+    inviteCode: g.invite_code,
+    coverPhotoUrl: g.cover_photo_url,
+    createdBy: g.created_by,
+    createdAt: g.created_at,
+    updatedAt: g.updated_at,
+    myRole: g.my_role,
+    payoutOrder: g.payout_order,
+  };
+}
+
+function normalizeMember(m) {
+  return {
+    id: m.id,
+    groupId: m.group_id,
+    userId: m.user_id,
+    role: m.role,
+    status: m.status,
+    payoutOrder: m.payout_order,
+    joinedAt: m.joined_at,
+    firstName: m.first_name,
+    lastName: m.last_name,
+    email: m.email,
+    photoUrl: m.profile_photo_url,
+  };
+}
+
 // POST /api/groups
 const createGroup = async (req, res, next) => {
   try {
@@ -18,6 +62,14 @@ const createGroup = async (req, res, next) => {
       contributionDay = 1, payoutDay = 25, minApprovalsWithdrawal = 2,
       allowLateContributions = true, lateFeeAmount = 0, currency = 'ZMW'
     } = req.body;
+
+    const existing = await query(
+      `SELECT id FROM groups WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+      [name]
+    );
+    if (existing.rows.length) {
+      return res.status(409).json({ success: false, message: `A group named "${name}" already exists. Please choose a different name.` });
+    }
 
     const slug = slugify(`${name}-${Date.now()}`, { lower: true, strict: true });
     const inviteCode = makeInviteCode();
@@ -144,7 +196,7 @@ const getMyGroups = async (req, res, next) => {
        ORDER BY g.created_at DESC`,
       [req.user.id]
     );
-    res.json({ success: true, data: result.rows });
+    res.json({ success: true, data: result.rows.map(normalizeGroup) });
   } catch (err) { next(err); }
 };
 
@@ -175,7 +227,7 @@ const getGroupDetail = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: { ...groupResult.rows[0], members: membersResult.rows }
+      data: { ...normalizeGroup(groupResult.rows[0]), members: membersResult.rows.map(normalizeMember) }
     });
   } catch (err) { next(err); }
 };
@@ -260,7 +312,172 @@ const removeMember = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// POST /api/groups/:groupId/invite  — send email invitation
+const inviteMember = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const { email: inviteeEmail } = req.body;
+
+    const [groupResult, inviterResult] = await Promise.all([
+      query('SELECT * FROM groups WHERE id = $1', [groupId]),
+      query('SELECT * FROM users WHERE id = $1', [req.user.id]),
+    ]);
+    const group = groupResult.rows[0];
+    const inviter = inviterResult.rows[0];
+    if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
+
+    // Prevent inviting existing active members
+    const memberCheck = await query(
+      `SELECT id FROM group_members
+       WHERE group_id = $1 AND status = 'active'
+         AND user_id = (SELECT id FROM users WHERE email = $2 LIMIT 1)`,
+      [groupId, inviteeEmail]
+    );
+    if (memberCheck.rows.length) {
+      return res.status(409).json({ success: false, message: 'This person is already a member of the group.' });
+    }
+
+    // Cancel any existing pending invite to the same email for this group
+    await query(
+      `UPDATE group_invitations SET status = 'expired'
+       WHERE group_id = $1 AND email = $2 AND status = 'pending'`,
+      [groupId, inviteeEmail]
+    );
+
+    const token = require('crypto').randomBytes(32).toString('hex');
+    await query(
+      `INSERT INTO group_invitations (group_id, invited_by, email, token)
+       VALUES ($1, $2, $3, $4)`,
+      [groupId, req.user.id, inviteeEmail, token]
+    );
+
+    await email.sendGroupInvitation(inviter, inviteeEmail, group, token);
+    res.json({ success: true, message: `Invitation sent to ${inviteeEmail}` });
+  } catch (err) { next(err); }
+};
+
+// GET /api/groups/invitations/:token  — get invitation details (public)
+const getInvitation = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const result = await query(
+      `SELECT gi.*, g.name AS group_name, g.description AS group_description,
+              g.monthly_amount, g.max_members, g.payout_day, g.currency,
+              u.first_name AS inviter_first, u.last_name AS inviter_last
+       FROM group_invitations gi
+       JOIN groups g ON g.id = gi.group_id
+       JOIN users u ON u.id = gi.invited_by
+       WHERE gi.token = $1`,
+      [token]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, message: 'Invitation not found.' });
+    }
+    const inv = result.rows[0];
+    if (inv.status !== 'pending' || new Date(inv.expires_at) < new Date()) {
+      return res.status(410).json({ success: false, message: 'This invitation has expired or already been used.' });
+    }
+    res.json({
+      success: true, data: {
+        token: inv.token,
+        email: inv.email,
+        status: inv.status,
+        expiresAt: inv.expires_at,
+        group: {
+          id: inv.group_id,
+          name: inv.group_name,
+          description: inv.group_description,
+          monthlyAmount: inv.monthly_amount,
+          maxMembers: inv.max_members,
+          payoutDay: inv.payout_day,
+          currency: inv.currency,
+        },
+        invitedBy: { firstName: inv.inviter_first, lastName: inv.inviter_last },
+      }
+    });
+  } catch (err) { next(err); }
+};
+
+// POST /api/groups/invitations/:token/accept  — accept invitation (auth required)
+const acceptInvitation = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const result = await query(
+      `SELECT gi.*, g.* FROM group_invitations gi
+       JOIN groups g ON g.id = gi.group_id
+       WHERE gi.token = $1`,
+      [token]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, message: 'Invitation not found.' });
+    }
+    const inv = result.rows[0];
+    if (inv.status !== 'pending' || new Date(inv.expires_at) < new Date()) {
+      return res.status(410).json({ success: false, message: 'This invitation has expired or already been used.' });
+    }
+
+    // Check email matches the logged-in user
+    const userResult = await query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const user = userResult.rows[0];
+    if (user.email.toLowerCase() !== inv.email.toLowerCase()) {
+      return res.status(403).json({ success: false, message: 'This invitation was sent to a different email address.' });
+    }
+
+    // Check not already a member
+    const memberCheck = await query(
+      `SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+      [inv.group_id, req.user.id]
+    );
+    if (memberCheck.rows.length) {
+      await query(`UPDATE group_invitations SET status = 'accepted', accepted_at = NOW() WHERE token = $1`, [token]);
+      return res.json({ success: true, message: 'You are already a member of this group.', groupId: inv.group_id });
+    }
+
+    await withTransaction(async (client) => {
+      const memberCount = await client.query(
+        `SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND status = 'active'`,
+        [inv.group_id]
+      );
+      const payoutOrder = parseInt(memberCount.rows[0].count) + 1;
+
+      await client.query(
+        `INSERT INTO group_members (group_id, user_id, role, status, payout_order, joined_at)
+         VALUES ($1, $2, 'member', 'active', $3, NOW())
+         ON CONFLICT (group_id, user_id) DO UPDATE SET status = 'active', joined_at = NOW()`,
+        [inv.group_id, req.user.id, payoutOrder]
+      );
+      await client.query(
+        `UPDATE group_invitations SET status = 'accepted', accepted_at = NOW() WHERE token = $1`,
+        [token]
+      );
+    });
+
+    await notify(req.user.id, 'group', `Joined ${inv.name}`, 'You have joined the group via email invitation.', { groupId: inv.group_id });
+    email.sendJoinedGroup(user, inv).catch(() => {});
+
+    res.json({ success: true, message: `You have joined ${inv.name}!`, groupId: inv.group_id });
+  } catch (err) { next(err); }
+};
+
+// POST /api/groups/invitations/:token/decline  — decline invitation
+const declineInvitation = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const result = await query(
+      `UPDATE group_invitations SET status = 'declined'
+       WHERE token = $1 AND status = 'pending'
+       RETURNING id`,
+      [token]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, message: 'Invitation not found or already resolved.' });
+    }
+    res.json({ success: true, message: 'Invitation declined.' });
+  } catch (err) { next(err); }
+};
+
 module.exports = {
   createGroup, joinGroup, getMyGroups, getGroupDetail,
-  getPayoutSchedule, updateGroup, rotateInviteCode, removeMember
+  getPayoutSchedule, updateGroup, rotateInviteCode, removeMember,
+  inviteMember, getInvitation, acceptInvitation, declineInvitation,
 };
