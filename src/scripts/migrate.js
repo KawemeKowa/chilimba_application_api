@@ -1,6 +1,4 @@
 require('dotenv').config();
-const dns = require('dns');
-dns.setServers(['8.8.8.8', '1.1.1.1']); // override ISP DNS that can't resolve supabase.co
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
