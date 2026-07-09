@@ -457,7 +457,7 @@ const acceptInvitation = async (req, res, next) => {
       );
     });
 
-    await notify(req.user.id, 'group', `Joined ${inv.name}`, 'You have joined the group via email invitation.', { groupId: inv.group_id });
+    notify(req.user.id, 'group', `Joined ${inv.name}`, 'You have joined the group via email invitation.', { groupId: inv.group_id }).catch(() => {});
     email.sendJoinedGroup(user, inv).catch(() => {});
 
     res.json({ success: true, message: `You have joined ${inv.name}!`, groupId: inv.group_id });
