@@ -11,8 +11,14 @@ const errorHandler = (err, req, res, next) => {
   }));
 
   if (err.code === '23505') {
-    // Postgres unique violation
-    return res.status(409).json({ success: false, message: 'Duplicate entry', detail: err.detail });
+    // Parse "Key (column)=(value) already exists." from pg detail
+    const col = err.detail?.match(/Key \(([^)]+)\)/)?.[1];
+    const fieldMessages = {
+      email: 'An account with this email address already exists.',
+      phone: 'An account with this phone number already exists.',
+    };
+    const message = fieldMessages[col] || 'This entry already exists.';
+    return res.status(409).json({ success: false, message });
   }
   if (err.code === '23503') {
     // Foreign key violation
