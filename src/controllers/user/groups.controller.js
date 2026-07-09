@@ -50,6 +50,7 @@ function normalizeMember(m) {
     firstName: m.first_name,
     lastName: m.last_name,
     email: m.email,
+    phone: m.phone,
     photoUrl: m.profile_photo_url,
   };
 }
@@ -218,7 +219,7 @@ const getGroupDetail = async (req, res, next) => {
     }
 
     const membersResult = await query(
-      `SELECT gm.*, u.first_name, u.last_name, u.email, u.profile_photo_url
+      `SELECT gm.*, u.first_name, u.last_name, u.email, u.phone, u.profile_photo_url
        FROM group_members gm JOIN users u ON u.id = gm.user_id
        WHERE gm.group_id = $1 AND gm.status = 'active'
        ORDER BY gm.payout_order ASC`,
