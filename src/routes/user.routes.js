@@ -36,6 +36,14 @@ authRouter.post('/change-password', authenticate, [
   body('newPassword').isLength({ min: 8 }),
 ], authCtrl.changePassword);
 
+authRouter.post('/forgot-password', [
+  body('email').isEmail().normalizeEmail(),
+], validate, authCtrl.forgotPassword);
+
+authRouter.post('/reset-password/:token', [
+  body('password').isLength({ min: 8 }),
+], validate, authCtrl.resetPassword);
+
 // ── groups.routes.js ──
 const groupsRouter = express.Router();
 const groupsCtrl = require('../controllers/user/groups.controller');
