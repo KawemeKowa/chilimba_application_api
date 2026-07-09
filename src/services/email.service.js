@@ -366,7 +366,23 @@ async function sendCommitteePoolCreated(memberEmail, memberName, pool, group, cr
   await send(memberEmail, `New committee pool: "${pool.title}" in ${group.name}`, html);
 }
 
-// ─── 14. Group email invitation ───────────────────────────────────────────────
+// ─── 14. Password reset ───────────────────────────────────────────────────────
+
+async function sendPasswordReset(user, token) {
+  const resetLink = `${APP_URL}/auth/reset-password/${token}`;
+  const html = layout('Reset Your Password', `
+    ${h1('Reset your password 🔑')}
+    ${p(`Hi ${user.first_name}, we received a request to reset your Chilimba account password.`)}
+    ${p('Click the button below. The link expires in <strong>1 hour</strong>.')}
+    ${btn('Reset Password', resetLink)}
+    ${divider()}
+    ${p('If you didn\'t request a password reset, you can safely ignore this email — your password will not change.')}
+    ${p(`<small style="color:#9ca3af">Or copy this link into your browser:<br/>${resetLink}</small>`)}
+  `);
+  await send(user.email, 'Reset your Chilimba password', html);
+}
+
+// ─── 15. Group email invitation ───────────────────────────────────────────────
 
 async function sendGroupInvitation(inviterUser, inviteeEmail, group, inviteToken) {
   const acceptLink = `${APP_URL}/invitations/${inviteToken}`;
@@ -402,6 +418,7 @@ function categoryColor(cat) {
 
 module.exports = {
   sendWelcome,
+  sendPasswordReset,
   sendPasswordChanged,
   sendGroupCreated,
   sendMemberJoined,

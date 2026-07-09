@@ -219,4 +219,76 @@ const changePassword = async (req, res, next) => {
   }
 };
 
-module.exports = { register, login, refreshToken, logout, getMe, updateProfile, changePassword };
+// POST /api/auth/forgot-password
+const forgotPassword = async (req, res, next) => {
+  try {
+    const { email: emailAddr } = req.body;
+
+    const result = await query(
+      `SELECT id, first_name, last_name, email FROM users
+       WHERE email = $1 AND status NOT IN ('banned')`,
+      [emailAddr.toLowerCase()]
+    );
+    const user = result.rows[0];
+
+    if (user) {
+      // Invalidate any existing unused tokens for this user
+      await query(
+        `UPDATE password_resets SET used_at = NOW()
+         WHERE user_id = $1 AND used_at IS NULL`,
+        [user.id]
+      );
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+      await query(
+        'INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
+        [user.id, tokenHash, expiresAt]
+      );
+
+      email.sendPasswordReset(user, token);
+    }
+
+    // Always return 200 — never reveal whether the email exists
+    res.json({ success: true, message: 'If that email is registered, a reset link has been sent.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/auth/reset-password/:token
+const resetPassword = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const result = await query(
+      `SELECT pr.id, pr.user_id
+       FROM password_resets pr
+       WHERE pr.token_hash = $1
+         AND pr.used_at IS NULL
+         AND pr.expires_at > NOW()`,
+      [tokenHash]
+    );
+
+    if (!result.rows.length) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired reset link.' });
+    }
+
+    const { id: resetId, user_id: userId } = result.rows[0];
+
+    const passwordHash = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
+    await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, userId]);
+    await query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [resetId]);
+    await query('UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1', [userId]);
+
+    res.json({ success: true, message: 'Password reset successfully. Please log in.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { register, login, refreshToken, logout, getMe, updateProfile, changePassword, forgotPassword, resetPassword };
