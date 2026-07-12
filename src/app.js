@@ -12,7 +12,8 @@ const logger = require('./config/logger');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const {
   authRouter, groupsRouter, contribRouter,
-  withdrawalsRouter, committeeRouter, miscRouter
+  withdrawalsRouter, committeeRouter, miscRouter,
+  paymentsRouter, webhooksRouter,
 } = require('./routes/user.routes');
 const { adminRouter, superAdminRouter } = require('./routes/admin.routes');
 
@@ -131,6 +132,10 @@ app.use('/api/contributions', contribRouter);
 app.use('/api/withdrawals',   withdrawalsRouter);
 app.use('/api/committees',    committeeRouter);
 app.use('/api',               miscRouter);  
+
+// ─── ADMIN API ROUTES ─────────────────────────────────────────────────────────
+app.use('/api/payments',      paymentsRouter);
+app.use('/api/webhooks',      webhooksRouter);
 
 // ─── ADMIN API ROUTES ─────────────────────────────────────────────────────────
 app.use('/api/admin',         adminRouter);

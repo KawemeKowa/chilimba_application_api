@@ -130,6 +130,32 @@ committeeRouter.get('/:poolId/contributors', authenticate, committeeCtrl.getCont
 
 committeeRouter.patch('/:poolId/close', authenticate, committeeCtrl.closePool);
 
+// ── payments.routes.js ──
+const paymentsRouter = express.Router();
+const paymentsCtrl = require('../controllers/user/payments.controller');
+
+paymentsRouter.post('/deposit', authenticate, [
+  body('walletId').isUUID(),
+  body('amount').isFloat({ min: 1 }),
+  body('mobileNumber').trim().notEmpty(),
+], validate, paymentsCtrl.initiateDeposit);
+
+paymentsRouter.get('/methods',              authenticate, paymentsCtrl.getPaymentMethods);
+paymentsRouter.put('/methods/mobile-money', authenticate, [
+  body('mobileNumber').trim().notEmpty(),
+  body('provider').isIn(['mtn', 'airtel', 'zamtel']),
+], validate, paymentsCtrl.saveMobileMoney);
+paymentsRouter.put('/methods/bank', authenticate, [
+  body('bankName').trim().notEmpty(),
+  body('accountNumber').trim().notEmpty(),
+  body('accountName').trim().notEmpty(),
+], validate, paymentsCtrl.saveBankDetails);
+paymentsRouter.get('/history', authenticate, paymentsCtrl.getPaymentHistory);
+
+// ── webhooks (public — no auth) ──
+const webhooksRouter = express.Router();
+webhooksRouter.post('/lipila', paymentsCtrl.handleWebhook);
+
 // ── misc.routes.js (messages, wallet, notifications) ──
 const miscRouter = express.Router();
 const miscCtrl = require('../controllers/user/misc.controller');
@@ -152,4 +178,4 @@ miscRouter.get('/notifications', authenticate, miscCtrl.getNotifications);
 miscRouter.patch('/notifications/read-all', authenticate, miscCtrl.markAllRead);
 miscRouter.patch('/notifications/:id/read', authenticate, miscCtrl.markRead);
 
-module.exports = { authRouter, groupsRouter, contribRouter, withdrawalsRouter, committeeRouter, miscRouter };
+module.exports = { authRouter, groupsRouter, contribRouter, withdrawalsRouter, committeeRouter, miscRouter, paymentsRouter, webhooksRouter };

@@ -1,8 +1,11 @@
+const crypto   = require('crypto');
 const { query, withTransaction } = require('../../config/db');
 const { disbursePayout } = require('../../services/chilimba.service');
 const { notify, notifyGroup } = require('../../services/notification.service');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
-const email = require('../../services/email.service');
+const email    = require('../../services/email.service');
+const lipila   = require('../../services/lipila.service');
+const logger   = require('../../config/logger');
 
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
@@ -193,12 +196,47 @@ const processPayoutDisbursement = async (req, res, next) => {
       data: { netPayout: result.netPayout, feeCharged: result.feeCharged }
     });
 
-    query('SELECT first_name, last_name, email FROM users WHERE id = $1', [result.payout.user_id])
-      .then(({ rows }) => {
-        if (rows.length) {
-          email.sendPayoutDisbursed(rows[0], result.payout, { name: result.payout.group_name, id: result.payout.group_id });
-        }
-      }).catch(() => {});
+    // Fire-and-forget: email + Lipila disbursement
+    query(
+      `SELECT u.first_name, u.last_name, u.email,
+              pm.mobile_number, pm.mobile_provider
+       FROM users u
+       LEFT JOIN user_payment_methods pm ON pm.user_id = u.id AND pm.type = 'mobile_money'
+       WHERE u.id = $1`,
+      [result.payout.user_id]
+    ).then(({ rows }) => {
+      if (!rows.length) return;
+      const user = rows[0];
+      email.sendPayoutDisbursed(user, result.payout, { name: result.payout.group_name, id: result.payout.group_id });
+
+      if (user.mobile_number) {
+        const referenceId = crypto.randomUUID();
+        lipila.initiateDisbursement({
+          referenceId,
+          amount: result.netPayout,
+          phone: user.mobile_number,
+          narration: `Chilimba payout – ${result.payout.group_name}`,
+        }).then(lipilaRes => {
+          // Record in lipila_transactions (wallet_id = recipient's personal wallet)
+          query(
+            `SELECT id FROM wallets WHERE owner_id = $1 AND type = 'personal' AND group_id IS NULL LIMIT 1`,
+            [result.payout.user_id]
+          ).then(({ rows: wRows }) => {
+            const walletId = wRows[0]?.id || null;
+            query(
+              `INSERT INTO lipila_transactions
+                 (reference_id, lipila_id, type, status, amount, account_number, narration, wallet_id, user_id, group_id)
+               VALUES ($1,$2,'disbursement','pending',$3,$4,$5,$6,$7,$8)`,
+              [referenceId, lipilaRes.identifier || null, result.netPayout,
+               user.mobile_number, `Chilimba payout – ${result.payout.group_name}`,
+               walletId, result.payout.user_id, result.payout.group_id]
+            ).catch(e => logger.error(`[lipila] failed to record disbursement txn: ${e.message}`));
+          }).catch(() => {});
+        }).catch(e => logger.error(`[lipila] disbursement failed: ${e.message}`));
+      } else {
+        logger.warn(`[lipila] user ${result.payout.user_id} has no mobile_money payment method — skipping MoMo disbursement`);
+      }
+    }).catch(() => {});
   } catch (err) { next(err); }
 };
 

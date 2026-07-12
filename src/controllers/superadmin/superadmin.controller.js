@@ -1,5 +1,6 @@
 const { query } = require('../../config/db');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
+const lipila = require('../../services/lipila.service');
 
 // GET /api/superadmin/analytics/overview
 const getPlatformOverview = async (req, res, next) => {
@@ -292,9 +293,80 @@ const updateUserRole = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// GET /api/superadmin/finance
+const getFinanceOverview = async (req, res, next) => {
+  try {
+    const [lipilaBalance, groupFunds, recentPayouts, recentDeposits] = await Promise.all([
+      // Live Lipila wallet balance
+      lipila.getBalance().catch(() => ({ data: { balance: null }, error: true })),
+
+      // Virtual balance held per group (sum of all group wallets)
+      query(`
+        SELECT g.id, g.name, g.currency,
+               COALESCE(SUM(w.balance), 0) AS group_balance,
+               COUNT(DISTINCT gm.user_id) FILTER (WHERE gm.status = 'active') AS member_count
+        FROM groups g
+        LEFT JOIN wallets w ON w.group_id = g.id
+        LEFT JOIN group_members gm ON gm.group_id = g.id
+        WHERE g.status = 'active'
+        GROUP BY g.id, g.name, g.currency
+        ORDER BY group_balance DESC
+        LIMIT 20`),
+
+      // Recent disbursements via Lipila
+      query(`
+        SELECT lt.*, u.first_name, u.last_name, g.name AS group_name
+        FROM lipila_transactions lt
+        LEFT JOIN users u ON u.id = lt.user_id
+        LEFT JOIN groups g ON g.id = lt.group_id
+        WHERE lt.type = 'disbursement'
+        ORDER BY lt.created_at DESC
+        LIMIT 20`),
+
+      // Recent collections (deposits)
+      query(`
+        SELECT lt.*, u.first_name, u.last_name
+        FROM lipila_transactions lt
+        LEFT JOIN users u ON u.id = lt.user_id
+        WHERE lt.type = 'collection'
+        ORDER BY lt.created_at DESC
+        LIMIT 20`),
+    ]);
+
+    // Total virtual balance across all wallets
+    const totalVirtual = await query(
+      `SELECT COALESCE(SUM(balance), 0) AS total FROM wallets WHERE is_frozen = FALSE`
+    );
+
+    // Lipila txn summary
+    const txnSummary = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE type = 'collection'   AND status = 'successful') AS deposits_count,
+        COALESCE(SUM(amount) FILTER (WHERE type = 'collection'   AND status = 'successful'), 0) AS deposits_total,
+        COUNT(*) FILTER (WHERE type = 'disbursement' AND status = 'successful') AS payouts_count,
+        COALESCE(SUM(amount) FILTER (WHERE type = 'disbursement' AND status = 'successful'), 0) AS payouts_total,
+        COUNT(*) FILTER (WHERE status = 'pending')   AS pending_count
+      FROM lipila_transactions`);
+
+    res.json({
+      success: true,
+      data: {
+        lipilaWalletBalance: lipilaBalance?.data?.balance ?? null,
+        lipilaBalanceError:  lipilaBalance?.error ?? false,
+        totalVirtualBalance: parseFloat(totalVirtual.rows[0].total),
+        summary:             txnSummary.rows[0],
+        groupFunds:          groupFunds.rows,
+        recentPayouts:       recentPayouts.rows,
+        recentDeposits:      recentDeposits.rows,
+      }
+    });
+  } catch (err) { next(err); }
+};
+
 module.exports = {
   getPlatformOverview, getDailyStats, getGroupStats, getMemberCompliance,
   getRevenueBreakdown, getTopGroups, getUserGrowth,
   getSettings, updateSetting,
-  getAuditLogs, getHealthCheck, listAdmins, updateUserRole
+  getAuditLogs, getHealthCheck, listAdmins, updateUserRole,
+  getFinanceOverview,
 };
