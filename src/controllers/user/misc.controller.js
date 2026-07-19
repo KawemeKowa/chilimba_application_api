@@ -70,7 +70,7 @@ const deleteMessage = async (req, res, next) => {
 const getWallet = async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT w.*, g.name AS group_name
+      `SELECT w.*, g.name AS group_name, g.monthly_amount, g.max_members, g.current_cycle
        FROM wallets w LEFT JOIN groups g ON g.id = w.group_id
        WHERE w.owner_id = $1 ORDER BY w.type, w.created_at`,
       [req.user.id]
