@@ -46,6 +46,7 @@ function normalizeMember(m) {
     role: m.role,
     status: m.status,
     payoutOrder: m.payout_order,
+    permissions: m.permissions || [],
     joinedAt: m.joined_at,
     firstName: m.first_name,
     lastName: m.last_name,

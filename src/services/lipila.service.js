@@ -93,6 +93,27 @@ async function initiateCollection({ referenceId, amount, phone, narration, curre
 }
 
 /**
+ * Initiate a card collection. Lipila card payments use a hosted checkout —
+ * the response contains a payment URL where the user enters card details
+ * and completes 3-D Secure. Final status arrives via webhook, same as MoMo.
+ * NOTE: endpoint path follows Lipila's /collections/* pattern — verify in
+ * the Lipila Swagger portal if card top-ups fail with a 404.
+ */
+async function initiateCardCollection({ referenceId, amount, narration, currency = 'ZMW', email = '' }) {
+  const res = await request('POST', '/collections/card', {
+    referenceId,
+    amount,
+    narration,
+    currency,
+    email,
+    referenceData: narration,
+  });
+  // Normalize the hosted-checkout URL across possible response keys
+  res.paymentUrl = res.paymentUrl || res.checkoutUrl || res.redirectUrl || res.url || null;
+  return res;
+}
+
+/**
  * Initiate a mobile money disbursement (send money to a recipient's MoMo number).
  */
 async function initiateDisbursement({ referenceId, amount, phone, narration, currency = 'ZMW' }) {
@@ -113,4 +134,4 @@ async function getBalance() {
   return request('GET', '/merchants/balance', null);
 }
 
-module.exports = { initiateCollection, initiateDisbursement, getBalance };
+module.exports = { initiateCollection, initiateCardCollection, initiateDisbursement, getBalance };

@@ -15,7 +15,7 @@ const {
   withdrawalsRouter, committeeRouter, miscRouter,
   paymentsRouter, webhooksRouter,
 } = require('./routes/user.routes');
-const { adminRouter, superAdminRouter } = require('./routes/admin.routes');
+const { adminRouter, superAdminRouter, rolesRouter } = require('./routes/admin.routes');
 
 const app = express();
 
@@ -139,6 +139,7 @@ app.use('/api/webhooks',      webhooksRouter);
 
 // ─── ADMIN API ROUTES ─────────────────────────────────────────────────────────
 app.use('/api/admin',         adminRouter);
+app.use('/api/roles',         rolesRouter);
 
 // ─── SUPER ADMIN API ROUTES ───────────────────────────────────────────────────
 app.use('/api/superadmin',    superAdminRouter);
