@@ -56,8 +56,16 @@ const getGroupWithdrawals = async (req, res, next) => {
   try {
     const { groupId } = req.params;
     const result = await query(
-      `SELECT wr.*,
-              u.first_name || ' ' || u.last_name AS requested_by_name,
+      `SELECT wr.id,
+              wr.group_id       AS "groupId",
+              wr.requested_by   AS "requestedBy",
+              wr.amount,
+              wr.reason,
+              wr.status,
+              wr.approvals_needed AS "approvalsNeeded",
+              wr.approvals_count  AS "approvalsCount",
+              wr.created_at       AS "createdAt",
+              u.first_name || ' ' || u.last_name AS "requesterName",
               COALESCE(
                 json_agg(
                   json_build_object(
@@ -67,7 +75,7 @@ const getGroupWithdrawals = async (req, res, next) => {
                     'votedAt', wa.voted_at
                   )
                 ) FILTER (WHERE wa.id IS NOT NULL), '[]'
-              ) AS approvals
+              ) AS votes
        FROM withdrawal_requests wr
        JOIN users u ON u.id = wr.requested_by
        LEFT JOIN withdrawal_approvals wa ON wa.withdrawal_id = wr.id
@@ -76,7 +84,12 @@ const getGroupWithdrawals = async (req, res, next) => {
        ORDER BY wr.created_at DESC`,
       [groupId]
     );
-    res.json({ success: true, data: result.rows });
+    const rows = result.rows;
+    res.json({
+      success: true,
+      data: rows,
+      pagination: { total: rows.length, totalPages: 1, page: 1, limit: rows.length },
+    });
   } catch (err) { next(err); }
 };
 

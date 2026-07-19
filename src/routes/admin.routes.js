@@ -70,6 +70,9 @@ superAdminRouter.get('/audit-logs', superCtrl.getAuditLogs);
 // Health
 superAdminRouter.get('/health', superCtrl.getHealthCheck);
 
+// Finance / Lipila
+superAdminRouter.get('/finance', superCtrl.getFinanceOverview);
+
 // Admin management
 superAdminRouter.get('/admins', superCtrl.listAdmins);
 superAdminRouter.patch('/admins/:userId/role', [

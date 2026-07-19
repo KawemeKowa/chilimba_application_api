@@ -408,7 +408,8 @@ const acceptInvitation = async (req, res, next) => {
     const result = await query(
       `SELECT gi.id, gi.token, gi.group_id, gi.invited_by, gi.email,
               gi.status AS invitation_status, gi.expires_at,
-              g.name, g.status AS group_status
+              g.name, g.status AS group_status,
+              g.monthly_amount, g.contribution_day, g.payout_day
        FROM group_invitations gi
        JOIN groups g ON g.id = gi.group_id
        WHERE gi.token = $1`,
