@@ -1,13 +1,22 @@
-const https = require('https');
-const http  = require('http');
+const https  = require('https');
+const http   = require('http');
 const { URL } = require('url');
+const logger  = require('../config/logger');
 
 const BASE_URL  = process.env.LIPILA_API_URL  || 'https://api.lipila.dev/api/v1';
-const API_KEY   = process.env.LIPILA_API_KEY  || '';
 const CALLBACK  = process.env.LIPILA_CALLBACK_URL || '';
+
+function getApiKey() {
+  const key = process.env.LIPILA_API_KEY;
+  if (!key) throw new Error('LIPILA_API_KEY is not set — add it to your Railway environment variables');
+  return key;
+}
 
 function request(method, path, body) {
   return new Promise((resolve, reject) => {
+    let apiKey;
+    try { apiKey = getApiKey(); } catch (e) { return reject(e); }
+
     const url  = new URL(`${BASE_URL}${path}`);
     const data = body ? JSON.stringify(body) : null;
     const lib  = url.protocol === 'https:' ? https : http;
@@ -19,7 +28,7 @@ function request(method, path, body) {
       method,
       headers: {
         'accept':       'application/json',
-        'x-api-key':    API_KEY,
+        'x-api-key':    apiKey,
         ...(data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}),
         ...(CALLBACK  ? { 'callbackUrl': CALLBACK } : {}),
       },
@@ -29,17 +38,34 @@ function request(method, path, body) {
       let raw = '';
       res.on('data', chunk => { raw += chunk; });
       res.on('end', () => {
+        logger.debug(`[lipila] ${method} ${path} → ${res.statusCode} body=${raw.slice(0, 300)}`);
+
+        // Empty body — derive error from HTTP status
+        if (!raw.trim()) {
+          const statusMessages = {
+            401: 'Lipila: Unauthorized — check your LIPILA_API_KEY',
+            403: 'Lipila: Forbidden — API key may not have permission',
+            404: 'Lipila: Endpoint not found — check LIPILA_API_URL',
+          };
+          const msg = statusMessages[res.statusCode] || `Lipila returned HTTP ${res.statusCode} with empty body`;
+          const err = new Error(msg);
+          err.statusCode = res.statusCode;
+          return reject(err);
+        }
+
         try {
           const parsed = JSON.parse(raw);
           if (res.statusCode >= 400) {
-            const err = new Error(parsed.message || `Lipila error ${res.statusCode}`);
+            const err = new Error(parsed.message || parsed.detail || `Lipila error ${res.statusCode}`);
             err.statusCode = res.statusCode;
             err.lipila = parsed;
             return reject(err);
           }
           resolve(parsed);
         } catch {
-          reject(new Error(`Lipila non-JSON response: ${raw.slice(0, 200)}`));
+          const err = new Error(`Lipila non-JSON response (HTTP ${res.statusCode}): ${raw.slice(0, 200)}`);
+          err.statusCode = res.statusCode;
+          reject(err);
         }
       });
     });
