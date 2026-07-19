@@ -294,20 +294,26 @@ async function sendWithdrawalOutcome(user, withdrawal, outcome, group) {
 
 // ─── 10. Payout disbursed ────────────────────────────────────────────────────
 
-async function sendPayoutDisbursed(user, payout, group) {
+async function sendPayoutDisbursed(user, payout, group, referenceId = null) {
+  const amt = payout.actual_amount || payout.expected_amount;
+  const rows = [
+    ['Group',          group.name],
+    ['Cycle',          `Cycle ${payout.cycle_number}`],
+    ['Amount',         `ZMW ${amt}`],
+    ['Status',         badge('DISBURSED', '#16a34a')],
+    ...(referenceId ? [['Transaction ID', referenceId]] : []),
+    ['Date',           new Date().toUTCString()],
+  ];
   const html = layout('Payout Disbursed', `
     ${h1('Your payout has arrived! 💰')}
-    ${p(`Hi ${user.first_name}, your Chilimba payout from <strong>${group.name}</strong> has been disbursed.`)}
-    ${infoBox([
-      ['Group',   group.name],
-      ['Cycle',   `Cycle ${payout.cycle_number}`],
-      ['Amount',  `ZMW ${payout.actual_amount || payout.expected_amount}`],
-      ['Date',    new Date().toUTCString()],
-    ])}
-    ${p('The funds have been credited to your Chilimba wallet. Well done on keeping up with contributions!')}
+    ${p(`Hi ${user.first_name}, your Chilimba payout from <strong>${group.name}</strong> has been sent to your mobile money.`)}
+    ${infoBox(rows)}
+    ${p('Well done on keeping up with contributions!')}
     ${btn('View Wallet', `${APP_URL}/wallet`)}
+    ${divider()}
+    ${p(`<small style="color:#6b7280;">Keep your transaction ID for any queries: <strong>${referenceId || '—'}</strong></small>`)}
   `);
-  await send(user.email, `Payout disbursed — ZMW ${payout.actual_amount || payout.expected_amount} from ${group.name}`, html);
+  await send(user.email, `Payout disbursed — ZMW ${amt} from ${group.name}`, html);
 }
 
 // ─── 11. KYC verified ────────────────────────────────────────────────────────
@@ -382,6 +388,95 @@ async function sendPasswordReset(user, token) {
   await send(user.email, 'Reset your Chilimba password', html);
 }
 
+// ─── 16. Deposit initiated ───────────────────────────────────────────────────
+
+async function sendDepositInitiated(user, { referenceId, amount, mobileNumber, currency = 'ZMW' }) {
+  const html = layout('Top-up Request Sent', `
+    ${h1('Top-up request sent 📲')}
+    ${p(`Hi ${user.first_name}, your request to top up your Chilimba wallet has been received.`)}
+    ${p('Check your phone — you should receive a USSD prompt to confirm with your PIN.')}
+    ${infoBox([
+      ['Amount',       `${currency} ${parseFloat(amount).toLocaleString()}`],
+      ['Mobile',       mobileNumber],
+      ['Status',       badge('PENDING', '#d97706')],
+      ['Reference ID', referenceId],
+      ['Date',         new Date().toUTCString()],
+    ])}
+    ${p('<small style="color:#6b7280;">Your balance will update automatically once you confirm on your phone. Save this reference ID for any follow-up queries.</small>')}
+    ${btn('View Wallet', `${APP_URL}/wallet`)}
+  `);
+  await send(user.email, `Top-up request sent — ${currency} ${parseFloat(amount).toLocaleString()}`, html);
+}
+
+// ─── 17. Deposit confirmed ────────────────────────────────────────────────────
+
+async function sendDepositConfirmed(user, { referenceId, lipilaId, amount, currency = 'ZMW', paymentType }) {
+  const html = layout('Deposit Successful', `
+    ${h1('Money received! ✅')}
+    ${p(`Hi ${user.first_name}, your Chilimba wallet has been topped up successfully.`)}
+    ${infoBox([
+      ['Amount',        `${currency} ${parseFloat(amount).toLocaleString()}`],
+      ['Payment',       paymentType || 'Mobile Money'],
+      ['Status',        badge('SUCCESSFUL', '#16a34a')],
+      ['Reference ID',  referenceId],
+      ['Lipila ID',     lipilaId || '—'],
+      ['Date',          new Date().toUTCString()],
+    ])}
+    ${p('Your wallet balance has been updated.')}
+    ${btn('View Wallet', `${APP_URL}/wallet`)}
+    ${divider()}
+    ${p(`<small style="color:#6b7280;">Save this email as proof of payment. For queries, quote reference: <strong>${referenceId}</strong></small>`)}
+  `);
+  await send(user.email, `Wallet topped up — ${currency} ${parseFloat(amount).toLocaleString()} confirmed ✅`, html);
+}
+
+// ─── 18. Deposit failed ───────────────────────────────────────────────────────
+
+async function sendDepositFailed(user, { referenceId, lipilaId, amount, currency = 'ZMW' }) {
+  const html = layout('Top-up Failed', `
+    ${h1('Payment unsuccessful ❌')}
+    ${p(`Hi ${user.first_name}, your wallet top-up of <strong>${currency} ${parseFloat(amount).toLocaleString()}</strong> did not go through.`)}
+    ${infoBox([
+      ['Amount',       `${currency} ${parseFloat(amount).toLocaleString()}`],
+      ['Status',       badge('FAILED', '#dc2626')],
+      ['Reference ID', referenceId],
+      ['Lipila ID',    lipilaId || '—'],
+      ['Date',         new Date().toUTCString()],
+    ])}
+    ${p('Common reasons: insufficient balance, incorrect PIN, or the prompt timed out. No money has been deducted — you can try again.')}
+    ${btn('Try Again', `${APP_URL}/wallet`, '#dc2626')}
+    ${divider()}
+    ${p(`<small style="color:#6b7280;">If you believe this is an error, contact support with reference: <strong>${referenceId}</strong></small>`)}
+  `);
+  await send(user.email, `Top-up failed — ${currency} ${parseFloat(amount).toLocaleString()}`, html);
+}
+
+// ─── 19. Admin payment alert ──────────────────────────────────────────────────
+
+async function sendAdminPaymentAlert(adminEmail, adminName, { type, memberName, referenceId, lipilaId, amount, currency = 'ZMW', status, detail }) {
+  const isDeposit = type === 'deposit';
+  const isFail    = status === 'failed';
+  const title     = isDeposit ? 'New Deposit Received' : 'Payout Disbursement Failed';
+  const icon      = isDeposit ? '💳' : '⚠️';
+  const statusColor = isFail ? '#dc2626' : '#16a34a';
+  const html = layout(title, `
+    ${h1(`${icon} ${title}`)}
+    ${p(`Hi ${adminName}, here is a summary of a recent payment transaction on the platform.`)}
+    ${infoBox([
+      ['Type',         badge(type.toUpperCase(), isDeposit ? '#4f46e5' : '#d97706')],
+      ['Member',       memberName],
+      ['Amount',       `${currency} ${parseFloat(amount).toLocaleString()}`],
+      ['Status',       badge(status.toUpperCase(), statusColor)],
+      ['Reference ID', referenceId],
+      ['Lipila ID',    lipilaId || '—'],
+      ...(detail ? [['Note', detail]] : []),
+      ['Date',         new Date().toUTCString()],
+    ])}
+    ${btn('Finance Overview', `${APP_URL}/superadmin/finance`)}
+  `);
+  await send(adminEmail, `[Chilimba] ${title} — ${currency} ${parseFloat(amount).toLocaleString()}`, html);
+}
+
 // ─── 15. Group email invitation ───────────────────────────────────────────────
 
 async function sendGroupInvitation(inviterUser, inviteeEmail, group, inviteToken) {
@@ -432,4 +527,8 @@ module.exports = {
   sendAccountStatusChanged,
   sendCommitteePoolCreated,
   sendGroupInvitation,
+  sendDepositInitiated,
+  sendDepositConfirmed,
+  sendDepositFailed,
+  sendAdminPaymentAlert,
 };

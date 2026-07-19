@@ -1,6 +1,7 @@
 const crypto  = require('crypto');
 const { query, withTransaction } = require('../../config/db');
 const lipila   = require('../../services/lipila.service');
+const email    = require('../../services/email.service');
 const logger   = require('../../config/logger');
 
 // ─── DEPOSIT (MoMo collection) ────────────────────────────────────────────────
@@ -52,6 +53,14 @@ const initiateDeposit = async (req, res, next) => {
       message: 'Payment request sent. Check your phone for a prompt to enter your PIN.',
       data: { referenceId, status: 'pending' },
     });
+
+    // Fire-and-forget — confirm the request to the user
+    email.sendDepositInitiated(req.user, {
+      referenceId,
+      amount,
+      mobileNumber,
+      currency: wallet.currency,
+    }).catch(() => {});
   } catch (err) {
     // Mark failed if Lipila rejected immediately
     if (req.body?.referenceId) {
@@ -128,6 +137,58 @@ const handleWebhook = async (req, res) => {
         );
       });
       logger.info(`[lipila webhook] wallet ${txn.wallet_id} credited ZMW ${amount}`);
+    }
+
+    // ── Email notifications (fire-and-forget) ─────────────────────────────────
+    if (txn.user_id) {
+      query('SELECT first_name, last_name, email FROM users WHERE id = $1', [txn.user_id])
+        .then(({ rows }) => {
+          if (!rows.length) return;
+          const user = rows[0];
+          const txnAmt    = amount || txn.amount;
+          const txnCur    = txn.currency || 'ZMW';
+          const lipilaId  = identifier || txn.lipila_id;
+
+          if (txnType === 'collection') {
+            if (successful) {
+              email.sendDepositConfirmed(user, { referenceId, lipilaId, amount: txnAmt, currency: txnCur, paymentType }).catch(() => {});
+
+              // Alert all platform admins of the incoming deposit
+              query(`SELECT email, first_name FROM users WHERE role IN ('admin','super_admin') AND status = 'active'`)
+                .then(({ rows: admins }) => {
+                  const memberName = `${user.first_name} ${user.last_name}`;
+                  for (const admin of admins) {
+                    email.sendAdminPaymentAlert(admin.email, admin.first_name, {
+                      type: 'deposit', memberName, referenceId, lipilaId,
+                      amount: txnAmt, currency: txnCur, status: 'successful',
+                    }).catch(() => {});
+                  }
+                }).catch(() => {});
+            } else {
+              email.sendDepositFailed(user, { referenceId, lipilaId, amount: txnAmt, currency: txnCur }).catch(() => {});
+            }
+          }
+        }).catch(() => {});
+    }
+
+    if (!successful && txnType === 'disbursement' && txn.user_id) {
+      // Alert admins that a MoMo payout bounced
+      query('SELECT first_name, last_name FROM users WHERE id = $1', [txn.user_id])
+        .then(({ rows: uRows }) => {
+          const memberName = uRows.length ? `${uRows[0].first_name} ${uRows[0].last_name}` : 'Unknown';
+          return query(`SELECT email, first_name FROM users WHERE role IN ('admin','super_admin') AND status = 'active'`)
+            .then(({ rows: admins }) => {
+              for (const admin of admins) {
+                email.sendAdminPaymentAlert(admin.email, admin.first_name, {
+                  type: 'payout', memberName,
+                  referenceId, lipilaId: identifier || txn.lipila_id,
+                  amount: amount || txn.amount, currency: txn.currency || 'ZMW',
+                  status: 'failed',
+                  detail: 'MoMo disbursement failed — amount reversed to group wallet.',
+                }).catch(() => {});
+              }
+            });
+        }).catch(() => {});
     }
 
     if (!successful && txnType === 'disbursement' && txn.wallet_id) {

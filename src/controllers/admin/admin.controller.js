@@ -207,10 +207,9 @@ const processPayoutDisbursement = async (req, res, next) => {
     ).then(({ rows }) => {
       if (!rows.length) return;
       const user = rows[0];
-      email.sendPayoutDisbursed(user, result.payout, { name: result.payout.group_name, id: result.payout.group_id });
-
       if (user.mobile_number) {
         const referenceId = crypto.randomUUID();
+        email.sendPayoutDisbursed(user, result.payout, { name: result.payout.group_name, id: result.payout.group_id }, referenceId);
         lipila.initiateDisbursement({
           referenceId,
           amount: result.netPayout,
@@ -235,6 +234,8 @@ const processPayoutDisbursement = async (req, res, next) => {
         }).catch(e => logger.error(`[lipila] disbursement failed: ${e.message}`));
       } else {
         logger.warn(`[lipila] user ${result.payout.user_id} has no mobile_money payment method — skipping MoMo disbursement`);
+        // Still send payout notification (wallet credited, no MoMo)
+        email.sendPayoutDisbursed(user, result.payout, { name: result.payout.group_name, id: result.payout.group_id }).catch(() => {});
       }
     }).catch(() => {});
   } catch (err) { next(err); }
