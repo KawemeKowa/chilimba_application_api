@@ -9,27 +9,48 @@ const logger   = require('../../config/logger');
 // POST /api/payments/deposit
 const initiateDeposit = async (req, res, next) => {
   try {
-    const { walletId, amount, mobileNumber } = req.body;
+    const { walletId, groupId, amount, mobileNumber } = req.body;
 
-    // Validate wallet belongs to this user
-    const walletRes = await query(
-      `SELECT id, owner_id, type, currency FROM wallets WHERE id = $1`,
-      [walletId]
-    );
-    if (!walletRes.rows.length || walletRes.rows[0].owner_id !== req.user.id) {
-      return res.status(404).json({ success: false, message: 'Wallet not found' });
+    let wallet;
+    if (groupId) {
+      // Deposit in the context of a group — find or create the member's group wallet
+      const gm = await query(
+        `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+        [groupId, req.user.id]
+      );
+      if (!gm.rows.length) {
+        return res.status(403).json({ success: false, message: 'You are not an active member of this group.' });
+      }
+      const wRes = await query(
+        `INSERT INTO wallets (owner_id, type, currency, group_id)
+         VALUES ($1, 'group', COALESCE((SELECT currency FROM groups WHERE id = $2), 'ZMW'), $2)
+         ON CONFLICT (owner_id, type, group_id) DO UPDATE SET updated_at = NOW()
+         RETURNING id, owner_id, type, currency`,
+        [req.user.id, groupId]
+      );
+      wallet = wRes.rows[0];
+    } else if (walletId) {
+      const walletRes = await query(
+        `SELECT id, owner_id, type, currency FROM wallets WHERE id = $1`,
+        [walletId]
+      );
+      if (!walletRes.rows.length || walletRes.rows[0].owner_id !== req.user.id) {
+        return res.status(404).json({ success: false, message: 'Wallet not found' });
+      }
+      wallet = walletRes.rows[0];
+    } else {
+      return res.status(400).json({ success: false, message: 'walletId or groupId is required.' });
     }
-    const wallet = walletRes.rows[0];
 
     const referenceId = crypto.randomUUID();
 
     // Record pending transaction before calling Lipila
     await query(
       `INSERT INTO lipila_transactions
-         (reference_id, type, status, amount, currency, account_number, narration, wallet_id, user_id)
-       VALUES ($1,'collection','pending',$2,$3,$4,$5,$6,$7)`,
+         (reference_id, type, status, amount, currency, account_number, narration, wallet_id, user_id, group_id)
+       VALUES ($1,'collection','pending',$2,$3,$4,$5,$6,$7,$8)`,
       [referenceId, amount, wallet.currency, mobileNumber,
-       `Chilimba wallet top-up`, walletId, req.user.id]
+       `Chilimba wallet top-up`, wallet.id, req.user.id, groupId || null]
     );
 
     // Call Lipila

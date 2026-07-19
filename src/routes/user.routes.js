@@ -148,7 +148,8 @@ const paymentsRouter = express.Router();
 const paymentsCtrl = require('../controllers/user/payments.controller');
 
 paymentsRouter.post('/deposit', authenticate, [
-  body('walletId').isUUID(),
+  body('walletId').optional().isUUID(),
+  body('groupId').optional().isUUID(),
   body('amount').isFloat({ min: 1 }),
   body('mobileNumber').trim().notEmpty(),
 ], validate, paymentsCtrl.initiateDeposit);

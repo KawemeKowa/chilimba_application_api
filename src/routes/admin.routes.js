@@ -4,6 +4,29 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const adminCtrl = require('../controllers/admin/admin.controller');
 const superCtrl = require('../controllers/superadmin/superadmin.controller');
+const rolesCtrl = require('../controllers/admin/roles.controller');
+
+// ─── ROLES & PERMISSIONS ──────────────────────────────────────────────────────
+const rolesRouter = express.Router();
+
+// Any authenticated user can read their own effective permissions
+rolesRouter.get('/my-permissions', authenticate, rolesCtrl.myPermissions);
+
+// Everything else requires platform admin
+rolesRouter.use(authenticate, requireRole('admin', 'super_admin'));
+rolesRouter.get('/', rolesCtrl.listRoles);
+rolesRouter.post('/', [
+  body('name').trim().notEmpty().isLength({ max: 50 }),
+  body('scope').isIn(['platform', 'group']),
+  body('permissions').isArray(),
+], rolesCtrl.createRole);
+rolesRouter.get('/assignments', rolesCtrl.listAssignments);
+rolesRouter.delete('/assignments/:assignmentId', rolesCtrl.revokeAssignment);
+rolesRouter.patch('/:roleId', rolesCtrl.updateRole);
+rolesRouter.delete('/:roleId', rolesCtrl.deleteRole);
+rolesRouter.post('/:roleId/assign', [
+  body('email').isEmail().normalizeEmail(),
+], rolesCtrl.assignRole);
 
 // ─── ADMIN ROUTES ─────────────────────────────────────────────────────────────
 const adminRouter = express.Router();
@@ -79,4 +102,4 @@ superAdminRouter.patch('/admins/:userId/role', [
   body('role').isIn(['member', 'admin', 'super_admin']),
 ], superCtrl.updateUserRole);
 
-module.exports = { adminRouter, superAdminRouter };
+module.exports = { adminRouter, superAdminRouter, rolesRouter };

@@ -6,18 +6,30 @@ const lipila = require('../../services/lipila.service');
 const email  = require('../../services/email.service');
 const logger = require('../../config/logger');
 
-const isApprover = (membership) =>
-  Array.isArray(membership.permissions) && membership.permissions.includes('approver');
+const { getEffectivePermissions, hasPermission } = require('../../services/permissions.service');
 
-// Count active approvers in a group, excluding one user
-const countOtherApprovers = async (groupId, excludeUserId) => {
+// Members of a group who hold a given permission (via system role, legacy
+// permissions array, or custom role assignment), excluding one user.
+const otherMembersWithPermission = async (groupId, permission, excludeUserId) => {
   const r = await query(
-    `SELECT COUNT(*) FROM group_members
-     WHERE group_id = $1 AND status = 'active'
-       AND 'approver' = ANY(permissions) AND user_id != $2`,
-    [groupId, excludeUserId]
+    `SELECT gm.user_id FROM group_members gm
+     WHERE gm.group_id = $1 AND gm.status = 'active' AND gm.user_id != $2
+       AND EXISTS (
+         SELECT 1 FROM roles ro JOIN role_permissions rp ON rp.role_id = ro.id
+         WHERE rp.permission IN ($3, '*')
+           AND (
+             (ro.scope = 'group' AND ro.name = gm.role)
+             OR (ro.scope = 'group' AND ro.name = ANY(gm.permissions))
+             OR ro.id IN (
+               SELECT ur.role_id FROM user_roles ur
+               WHERE ur.user_id = gm.user_id
+                 AND (ur.group_id IS NULL OR ur.group_id = gm.group_id)
+             )
+           )
+       )`,
+    [groupId, excludeUserId, permission]
   );
-  return parseInt(r.rows[0].count);
+  return r.rows.map(row => row.user_id);
 };
 
 // ─── GET /api/groups/:groupId/payout-order ────────────────────────────────────
@@ -67,13 +79,15 @@ const getPayoutOrder = async (req, res, next) => {
       ),
     ]);
 
+    const myPerms = await getEffectivePermissions(req.user.id, groupId);
+
     res.json({
       success: true,
       data: {
         members: membersRes.rows,
         duePayouts: dueRes.rows,
         pendingProposal: proposalRes.rows[0] || null,
-        myPermissions: req.groupMembership.permissions || [],
+        myPermissions: myPerms,
         myRole: req.groupMembership.role,
       },
     });
@@ -98,10 +112,10 @@ const applyOrder = async (client, groupId, newOrder) => {
 const proposePayoutOrder = async (req, res, next) => {
   try {
     const { groupId } = req.params;
-    const membership = req.groupMembership;
 
-    if (!isApprover(membership)) {
-      return res.status(403).json({ success: false, message: 'Only members with the approver permission can change the payout order.' });
+    const myPerms = await getEffectivePermissions(req.user.id, groupId);
+    if (!hasPermission(myPerms, 'payout.set_order')) {
+      return res.status(403).json({ success: false, message: 'You do not have permission to change the payout order.' });
     }
 
     let { newOrder } = req.body;
@@ -131,7 +145,8 @@ const proposePayoutOrder = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'newOrder contains users who are not active members of this group.' });
     }
 
-    const othersCount = await countOtherApprovers(groupId, req.user.id);
+    const otherApprovers = await otherMembersWithPermission(groupId, 'payout.approve_order', req.user.id);
+    const othersCount = otherApprovers.length;
 
     // Sole approver — apply immediately
     if (othersCount === 0) {
@@ -156,18 +171,11 @@ const proposePayoutOrder = async (req, res, next) => {
     );
 
     // Notify the other approvers
-    query(
-      `SELECT user_id FROM group_members
-       WHERE group_id = $1 AND status = 'active'
-         AND 'approver' = ANY(permissions) AND user_id != $2`,
-      [groupId, req.user.id]
-    ).then(({ rows }) => {
-      for (const r of rows) {
-        notify(r.user_id, 'group', 'Payout Order Change Requested',
-          'A change to your group\'s payout order needs your approval.',
-          { groupId, proposalId: result.rows[0].id }).catch(() => {});
-      }
-    }).catch(() => {});
+    for (const approverId of otherApprovers) {
+      notify(approverId, 'group', 'Payout Order Change Requested',
+        'A change to your group\'s payout order needs your approval.',
+        { groupId, proposalId: result.rows[0].id }).catch(() => {});
+    }
 
     res.status(201).json({
       success: true,
@@ -183,10 +191,10 @@ const voteOnProposal = async (req, res, next) => {
   try {
     const { groupId, proposalId } = req.params;
     const { action } = req.body;
-    const membership = req.groupMembership;
 
-    if (!isApprover(membership)) {
-      return res.status(403).json({ success: false, message: 'Only approvers can vote on payout order changes.' });
+    const myPerms = await getEffectivePermissions(req.user.id, groupId);
+    if (!hasPermission(myPerms, 'payout.approve_order')) {
+      return res.status(403).json({ success: false, message: 'You do not have permission to vote on payout order changes.' });
     }
     if (!['approved', 'rejected'].includes(action)) {
       return res.status(400).json({ success: false, message: 'Action must be approved or rejected.' });
@@ -309,10 +317,10 @@ const setMemberPermission = async (req, res, next) => {
 const disburseGroupPayout = async (req, res, next) => {
   try {
     const { groupId, payoutScheduleId } = req.params;
-    const membership = req.groupMembership;
 
-    if (!isApprover(membership)) {
-      return res.status(403).json({ success: false, message: 'Only members with the approver permission can trigger disbursements.' });
+    const myPerms = await getEffectivePermissions(req.user.id, groupId);
+    if (!hasPermission(myPerms, 'payout.disburse')) {
+      return res.status(403).json({ success: false, message: 'You do not have permission to trigger disbursements.' });
     }
 
     // Must be the next scheduled payout for this group
