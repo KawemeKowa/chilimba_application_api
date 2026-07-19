@@ -151,7 +151,8 @@ paymentsRouter.post('/deposit', authenticate, [
   body('walletId').optional().isUUID(),
   body('groupId').optional().isUUID(),
   body('amount').isFloat({ min: 1 }),
-  body('mobileNumber').trim().notEmpty(),
+  body('method').optional().isIn(['mobile_money', 'card']),
+  body('mobileNumber').optional().trim(),
 ], validate, paymentsCtrl.initiateDeposit);
 
 paymentsRouter.get('/methods',              authenticate, paymentsCtrl.getPaymentMethods);

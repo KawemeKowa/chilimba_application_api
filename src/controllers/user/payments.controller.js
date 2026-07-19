@@ -9,7 +9,11 @@ const logger   = require('../../config/logger');
 // POST /api/payments/deposit
 const initiateDeposit = async (req, res, next) => {
   try {
-    const { walletId, groupId, amount, mobileNumber } = req.body;
+    const { walletId, groupId, amount, mobileNumber, method = 'mobile_money' } = req.body;
+
+    if (method === 'mobile_money' && !mobileNumber) {
+      return res.status(400).json({ success: false, message: 'mobileNumber is required for mobile money deposits.' });
+    }
 
     let wallet;
     if (groupId) {
@@ -47,21 +51,34 @@ const initiateDeposit = async (req, res, next) => {
     // Record pending transaction before calling Lipila
     await query(
       `INSERT INTO lipila_transactions
-         (reference_id, type, status, amount, currency, account_number, narration, wallet_id, user_id, group_id)
-       VALUES ($1,'collection','pending',$2,$3,$4,$5,$6,$7,$8)`,
-      [referenceId, amount, wallet.currency, mobileNumber,
-       `Chilimba wallet top-up`, wallet.id, req.user.id, groupId || null]
+         (reference_id, type, status, amount, currency, account_number, narration, wallet_id, user_id, group_id, payment_type)
+       VALUES ($1,'collection','pending',$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [referenceId, amount, wallet.currency, mobileNumber || null,
+       `Chilimba wallet top-up`, wallet.id, req.user.id, groupId || null,
+       method === 'card' ? 'Card' : null]
     );
 
     // Call Lipila
-    const lipilaRes = await lipila.initiateCollection({
-      referenceId,
-      amount: parseFloat(amount),
-      phone:  mobileNumber,
-      narration: 'Chilimba wallet top-up',
-      currency: wallet.currency,
-      email: req.user.email || '',
-    });
+    let lipilaRes, paymentUrl = null;
+    if (method === 'card') {
+      lipilaRes = await lipila.initiateCardCollection({
+        referenceId,
+        amount: parseFloat(amount),
+        narration: 'Chilimba wallet top-up',
+        currency: wallet.currency,
+        email: req.user.email || '',
+      });
+      paymentUrl = lipilaRes.paymentUrl;
+    } else {
+      lipilaRes = await lipila.initiateCollection({
+        referenceId,
+        amount: parseFloat(amount),
+        phone:  mobileNumber,
+        narration: 'Chilimba wallet top-up',
+        currency: wallet.currency,
+        email: req.user.email || '',
+      });
+    }
 
     // Store Lipila's identifier
     await query(
@@ -71,15 +88,17 @@ const initiateDeposit = async (req, res, next) => {
 
     res.json({
       success: true,
-      message: 'Payment request sent. Check your phone for a prompt to enter your PIN.',
-      data: { referenceId, status: 'pending' },
+      message: method === 'card'
+        ? 'Card payment created. Complete your payment on the secure checkout page.'
+        : 'Payment request sent. Check your phone for a prompt to enter your PIN.',
+      data: { referenceId, status: 'pending', paymentUrl },
     });
 
     // Fire-and-forget — confirm the request to the user
     email.sendDepositInitiated(req.user, {
       referenceId,
       amount,
-      mobileNumber,
+      mobileNumber: mobileNumber || 'Card payment',
       currency: wallet.currency,
     }).catch(() => {});
   } catch (err) {
