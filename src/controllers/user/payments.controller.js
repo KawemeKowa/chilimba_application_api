@@ -67,6 +67,9 @@ const initiateDeposit = async (req, res, next) => {
         narration: 'Chilimba wallet top-up',
         currency: wallet.currency,
         email: req.user.email || '',
+        firstName: req.user.first_name,
+        lastName: req.user.last_name,
+        phone: req.user.phone || '',
       });
       paymentUrl = lipilaRes.paymentUrl;
     } else {
@@ -111,17 +114,15 @@ const initiateDeposit = async (req, res, next) => {
   }
 };
 
-// ─── WEBHOOK (Lipila callback) ─────────────────────────────────────────────────
-
-// POST /api/webhooks/lipila  — public, no auth
-const handleWebhook = async (req, res) => {
-  try {
-    const payload = req.body;
-    logger.info(`[lipila webhook] ${JSON.stringify(payload)}`);
-
+// ─── SHARED EVENT PROCESSING (webhook + manual status sync) ───────────────────
+// Applies a Lipila status payload — { referenceId, status, type, amount,
+// identifier, paymentType, ... } — to our ledger. Called both by the webhook
+// (payload pushed by Lipila) and by syncTransactionStatus (payload pulled
+// from Lipila's check-status endpoint) so both paths share one code path.
+const processLipilaEvent = async (payload) => {
     // Lipila sends referenceId = our UUID
     const { referenceId, status, type, amount, identifier, paymentType } = payload;
-    if (!referenceId) return res.status(200).json({ received: true });
+    if (!referenceId) return;
 
     // Find our transaction
     const txRes = await query(
@@ -130,7 +131,7 @@ const handleWebhook = async (req, res) => {
     );
     if (!txRes.rows.length) {
       logger.warn(`[lipila webhook] unknown referenceId: ${referenceId}`);
-      return res.status(200).json({ received: true });
+      return;
     }
 
     const txn = txRes.rows[0];
@@ -253,12 +254,56 @@ const handleWebhook = async (req, res) => {
       });
       logger.warn(`[lipila webhook] disbursement failed, reversed wallet ${txn.wallet_id}`);
     }
+};
 
-    res.status(200).json({ received: true });
+// ─── WEBHOOK (Lipila callback) ─────────────────────────────────────────────────
+// Docs: https://docs.lipila.dev/docs/billing/webhook.html
+// POST /api/webhooks/lipila  — public, no auth. Always respond 200 so Lipila
+// doesn't retry — failures are logged, not surfaced to the caller.
+const handleWebhook = async (req, res) => {
+  try {
+    logger.info(`[lipila webhook] ${JSON.stringify(req.body)}`);
+    await processLipilaEvent(req.body);
   } catch (err) {
     logger.error(`[lipila webhook] error: ${err.message}`);
-    res.status(200).json({ received: true }); // always 200 to Lipila
+  } finally {
+    res.status(200).json({ received: true });
   }
+};
+
+// ─── MANUAL STATUS SYNC ────────────────────────────────────────────────────────
+// POST /api/payments/sync-status  { referenceId }
+// Only disbursements have a documented check-status endpoint on Lipila's side;
+// collections resolve via webhook only, so we just echo the current DB status.
+const syncTransactionStatus = async (req, res, next) => {
+  try {
+    const { referenceId } = req.body;
+    const txRes = await query(`SELECT * FROM lipila_transactions WHERE reference_id = $1`, [referenceId]);
+    if (!txRes.rows.length) {
+      return res.status(404).json({ success: false, message: 'Transaction not found.' });
+    }
+    const txn = txRes.rows[0];
+
+    const isOwner = txn.user_id === req.user.id;
+    const isAdmin = ['admin', 'super_admin'].includes(req.user.role);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Not authorized to view this transaction.' });
+    }
+
+    if (txn.type !== 'disbursement') {
+      return res.json({
+        success: true,
+        message: 'Collections update automatically via webhook — no manual check available.',
+        data: { status: txn.status },
+      });
+    }
+
+    const statusRes = await lipila.checkDisbursementStatus(referenceId);
+    await processLipilaEvent(statusRes);
+
+    const updated = await query(`SELECT status FROM lipila_transactions WHERE reference_id = $1`, [referenceId]);
+    res.json({ success: true, message: 'Status refreshed from Lipila.', data: { status: updated.rows[0].status } });
+  } catch (err) { next(err); }
 };
 
 // ─── PAYMENT METHODS ─────────────────────────────────────────────────────────
@@ -267,7 +312,12 @@ const handleWebhook = async (req, res) => {
 const getPaymentMethods = async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT * FROM user_payment_methods WHERE user_id = $1 ORDER BY type`,
+      `SELECT id, user_id AS "userId", type,
+              mobile_number AS "mobileNumber", mobile_provider AS "mobileProvider",
+              bank_name AS "bankName", account_number AS "accountNumber",
+              account_name AS "accountName", branch, swift_code AS "swiftCode",
+              is_default AS "isDefault", created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM user_payment_methods WHERE user_id = $1 ORDER BY type`,
       [req.user.id]
     );
     res.json({ success: true, data: result.rows });
@@ -294,17 +344,18 @@ const saveMobileMoney = async (req, res, next) => {
 // PUT /api/payments/methods/bank
 const saveBankDetails = async (req, res, next) => {
   try {
-    const { bankName, accountNumber, accountName, branch } = req.body;
+    const { bankName, accountNumber, accountName, branch, swiftCode } = req.body;
     await query(
-      `INSERT INTO user_payment_methods (user_id, type, bank_name, account_number, account_name, branch)
-       VALUES ($1, 'bank', $2, $3, $4, $5)
+      `INSERT INTO user_payment_methods (user_id, type, bank_name, account_number, account_name, branch, swift_code)
+       VALUES ($1, 'bank', $2, $3, $4, $5, $6)
        ON CONFLICT (user_id, type) DO UPDATE
          SET bank_name      = EXCLUDED.bank_name,
              account_number = EXCLUDED.account_number,
              account_name   = EXCLUDED.account_name,
              branch         = EXCLUDED.branch,
+             swift_code     = EXCLUDED.swift_code,
              updated_at     = NOW()`,
-      [req.user.id, bankName, accountNumber, accountName, branch || null]
+      [req.user.id, bankName, accountNumber, accountName, branch || null, swiftCode || null]
     );
     res.json({ success: true, message: 'Bank details saved.' });
   } catch (err) { next(err); }
@@ -314,7 +365,12 @@ const saveBankDetails = async (req, res, next) => {
 const getPaymentHistory = async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT lt.*, w.type AS wallet_type, g.name AS group_name
+      `SELECT lt.id, lt.reference_id AS "referenceId", lt.lipila_id AS "lipilaId",
+              lt.type, lt.status, lt.amount, lt.currency,
+              lt.account_number AS "accountNumber", lt.payment_type AS "paymentType",
+              lt.narration, lt.wallet_id AS "walletId", lt.user_id AS "userId",
+              lt.group_id AS "groupId", g.name AS "groupName",
+              lt.created_at AS "createdAt", lt.updated_at AS "updatedAt"
        FROM lipila_transactions lt
        LEFT JOIN wallets w ON w.id = lt.wallet_id
        LEFT JOIN groups  g ON g.id = lt.group_id
@@ -330,6 +386,7 @@ const getPaymentHistory = async (req, res, next) => {
 module.exports = {
   initiateDeposit,
   handleWebhook,
+  syncTransactionStatus,
   getPaymentMethods,
   saveMobileMoney,
   saveBankDetails,

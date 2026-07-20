@@ -164,8 +164,12 @@ paymentsRouter.put('/methods/bank', authenticate, [
   body('bankName').trim().notEmpty(),
   body('accountNumber').trim().notEmpty(),
   body('accountName').trim().notEmpty(),
+  body('swiftCode').optional().trim(),
 ], validate, paymentsCtrl.saveBankDetails);
 paymentsRouter.get('/history', authenticate, paymentsCtrl.getPaymentHistory);
+paymentsRouter.post('/sync-status', authenticate, [
+  body('referenceId').trim().notEmpty(),
+], validate, paymentsCtrl.syncTransactionStatus);
 
 // ── webhooks (public — no auth) ──
 const webhooksRouter = express.Router();
