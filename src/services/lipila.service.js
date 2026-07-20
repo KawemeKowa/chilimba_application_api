@@ -3,8 +3,11 @@ const http   = require('http');
 const { URL } = require('url');
 const logger  = require('../config/logger');
 
+// Docs: https://docs.lipila.dev/docs/gettingstarted/methods.html
+// Sandbox base: https://api.lipila.dev/api/v1  |  Live base: https://blz.lipila.io/api/v1
 const BASE_URL  = process.env.LIPILA_API_URL  || 'https://api.lipila.dev/api/v1';
 const CALLBACK  = process.env.LIPILA_CALLBACK_URL || '';
+const FRONTEND_URL = (process.env.FRONTEND_URL || '').split(',')[0].trim();
 
 function getApiKey() {
   const key = process.env.LIPILA_API_KEY;
@@ -77,8 +80,8 @@ function request(method, path, body) {
 }
 
 /**
- * Initiate a mobile money collection (charge a user's MoMo number).
- * Returns Lipila's initial response — final status comes via webhook.
+ * Mobile money collection (charge a user's MoMo number).
+ * Docs: https://docs.lipila.dev/docs/collections/momocollections.html
  */
 async function initiateCollection({ referenceId, amount, phone, narration, currency = 'ZMW', email = '' }) {
   return request('POST', '/collections/mobile-money', {
@@ -93,28 +96,42 @@ async function initiateCollection({ referenceId, amount, phone, narration, curre
 }
 
 /**
- * Initiate a card collection. Lipila card payments use a hosted checkout —
- * the response contains a payment URL where the user enters card details
- * and completes 3-D Secure. Final status arrives via webhook, same as MoMo.
- * NOTE: endpoint path follows Lipila's /collections/* pattern — verify in
- * the Lipila Swagger portal if card top-ups fail with a 404.
+ * Card collection (Visa / Mastercard / Amex) via Lipila's hosted checkout.
+ * Docs: https://docs.lipila.dev/docs/collections/collections.html
+ * Body is nested: { customerInfo, collectionRequest }. Response carries the
+ * redirect URL as `cardRedirectionUrl` — the user completes payment (incl.
+ * 3-D Secure) there; final status arrives via webhook like every other method.
  */
-async function initiateCardCollection({ referenceId, amount, narration, currency = 'ZMW', email = '' }) {
+async function initiateCardCollection({
+  referenceId, amount, narration, currency = 'ZMW',
+  firstName, lastName, email = '', phone = '',
+  city = 'Lusaka', country = 'ZM', address = '', zip = '',
+}) {
   const res = await request('POST', '/collections/card', {
-    referenceId,
-    amount,
-    narration,
-    currency,
-    email,
-    referenceData: narration,
+    customerInfo: {
+      firstName: firstName || 'Chilimba',
+      lastName:  lastName  || 'User',
+      phoneNumber: phone,
+      city, country, address, zip,
+      email,
+    },
+    collectionRequest: {
+      referenceId,
+      amount,
+      narration,
+      accountNumber: email || phone, // Lipila uses this as the payer's identifier for card txns
+      currency,
+      backUrl: FRONTEND_URL ? `${FRONTEND_URL}/wallet` : undefined,
+      referenceData: narration,
+    },
   });
-  // Normalize the hosted-checkout URL across possible response keys
-  res.paymentUrl = res.paymentUrl || res.checkoutUrl || res.redirectUrl || res.url || null;
+  res.paymentUrl = res.cardRedirectionUrl || null;
   return res;
 }
 
 /**
- * Initiate a mobile money disbursement (send money to a recipient's MoMo number).
+ * Mobile money disbursement (send money to a recipient's MoMo number).
+ * Docs: https://docs.lipila.dev/docs/disbursements/momodisbursements.html
  */
 async function initiateDisbursement({ referenceId, amount, phone, narration, currency = 'ZMW' }) {
   return request('POST', '/disbursements/mobile-money', {
@@ -128,10 +145,51 @@ async function initiateDisbursement({ referenceId, amount, phone, narration, cur
 }
 
 /**
+ * Bank disbursement (send money to a recipient's bank account).
+ * Docs: https://docs.lipila.dev/docs/disbursements/bank-disbursement.html
+ */
+async function initiateBankDisbursement({
+  referenceId, amount, currency = 'ZMW', narration,
+  accountNumber, swiftCode, firstName, lastName, accountHolderName,
+  phoneNumber, email = '', referenceData,
+}) {
+  return request('POST', '/disbursements/bank', {
+    referenceId,
+    amount,
+    currency,
+    narration,
+    accountNumber,
+    swiftCode,
+    firstName,
+    lastName,
+    accountHolderName,
+    phoneNumber,
+    email,
+    referenceData: referenceData || narration,
+  });
+}
+
+/**
+ * Check the current status of a disbursement directly with Lipila —
+ * useful when a webhook is delayed or missed.
+ * Docs: https://docs.lipila.dev/docs/disbursements/disbursements-status.html
+ */
+async function checkDisbursementStatus(referenceId) {
+  return request('GET', `/disbursements/check-status?referenceId=${encodeURIComponent(referenceId)}`, null);
+}
+
+/**
  * Fetch current platform Lipila wallet balance.
  */
 async function getBalance() {
   return request('GET', '/merchants/balance', null);
 }
 
-module.exports = { initiateCollection, initiateCardCollection, initiateDisbursement, getBalance };
+module.exports = {
+  initiateCollection,
+  initiateCardCollection,
+  initiateDisbursement,
+  initiateBankDisbursement,
+  checkDisbursementStatus,
+  getBalance,
+};
