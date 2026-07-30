@@ -301,9 +301,24 @@ const syncTransactionStatus = async (req, res, next) => {
       return res.json({ success: true, message: 'Transaction already resolved.', data: { status: txn.status } });
     }
 
-    const statusRes = txn.type === 'disbursement'
-      ? await lipila.checkDisbursementStatus(referenceId)
-      : await lipila.checkCollectionStatus(referenceId);
+    let statusRes;
+    try {
+      statusRes = txn.type === 'disbursement'
+        ? await lipila.checkDisbursementStatus(referenceId)
+        : await lipila.checkCollectionStatus(referenceId);
+    } catch (e) {
+      if (e.statusCode === 404) {
+        // Endpoint not available on the configured LIPILA_API_URL for this
+        // transaction type — nothing to do but wait for the webhook.
+        return res.json({
+          success: true,
+          message: 'Status check is not available right now — this will update automatically once Lipila sends the webhook confirmation.',
+          data: { status: txn.status },
+        });
+      }
+      throw e;
+    }
+
     await processLipilaEvent(statusRes);
 
     const updated = await query(`SELECT status FROM lipila_transactions WHERE reference_id = $1`, [referenceId]);
