@@ -142,6 +142,20 @@ const processLipilaEvent = async (payload) => {
       return;
     }
 
+    // Lipila's docs say webhooks only fire on a final outcome (Successful or
+    // Failed), but in practice a "Pending" status has been observed too —
+    // that is NOT final, so it must not be recorded as a failure. Only ever
+    // resolve to 'successful' or 'failed'; anything else is left untouched
+    // (still pending) so a later, genuinely final event can still land.
+    if (status !== 'Successful' && status !== 'Failed') {
+      logger.info(`[lipila] non-final status "${status}" for ${referenceId} — leaving as pending`);
+      await query(
+        `UPDATE lipila_transactions SET raw_webhook = $1, updated_at = NOW() WHERE reference_id = $2`,
+        [JSON.stringify(payload), referenceId]
+      );
+      return;
+    }
+
     // Update transaction record
     await query(
       `UPDATE lipila_transactions
