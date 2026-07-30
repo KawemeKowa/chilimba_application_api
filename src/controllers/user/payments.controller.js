@@ -135,6 +135,13 @@ const processLipilaEvent = async (payload) => {
 
     const txn = txRes.rows[0];
 
+    // Idempotency guard — a webhook retry or a manual status sync after the
+    // transaction already resolved must not re-credit the wallet a second time.
+    if (txn.status !== 'pending') {
+      logger.info(`[lipila] ignoring event for already-${txn.status} transaction ${referenceId}`);
+      return;
+    }
+
     // Update transaction record
     await query(
       `UPDATE lipila_transactions
@@ -272,8 +279,9 @@ const handleWebhook = async (req, res) => {
 
 // ─── MANUAL STATUS SYNC ────────────────────────────────────────────────────────
 // POST /api/payments/sync-status  { referenceId }
-// Only disbursements have a documented check-status endpoint on Lipila's side;
-// collections resolve via webhook only, so we just echo the current DB status.
+// Manually re-check a pending transaction's status with Lipila — collections
+// via /collections/check-status, disbursements via /disbursements/check-status.
+// Useful when a webhook is delayed or missed.
 const syncTransactionStatus = async (req, res, next) => {
   try {
     const { referenceId } = req.body;
@@ -289,15 +297,13 @@ const syncTransactionStatus = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Not authorized to view this transaction.' });
     }
 
-    if (txn.type !== 'disbursement') {
-      return res.json({
-        success: true,
-        message: 'Collections update automatically via webhook — no manual check available.',
-        data: { status: txn.status },
-      });
+    if (txn.status !== 'pending') {
+      return res.json({ success: true, message: 'Transaction already resolved.', data: { status: txn.status } });
     }
 
-    const statusRes = await lipila.checkDisbursementStatus(referenceId);
+    const statusRes = txn.type === 'disbursement'
+      ? await lipila.checkDisbursementStatus(referenceId)
+      : await lipila.checkCollectionStatus(referenceId);
     await processLipilaEvent(statusRes);
 
     const updated = await query(`SELECT status FROM lipila_transactions WHERE reference_id = $1`, [referenceId]);

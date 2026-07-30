@@ -115,30 +115,35 @@ async function initiateCollection({ referenceId, amount, phone, narration, curre
 /**
  * Card collection (Visa / Mastercard / Amex) via Lipila's hosted checkout.
  * Docs: https://docs.lipila.dev/docs/collections/collections.html
- * Body is nested: { customerInfo, collectionRequest }. Response carries the
- * redirect URL as `cardRedirectionUrl` — the user completes payment (incl.
- * 3-D Secure) there; final status arrives via webhook like every other method.
+ * Body is nested: { customerInfo, collectionRequest } — every field in both
+ * objects is required by Lipila, so this fills in safe non-empty defaults
+ * for anything the caller doesn't supply (rather than sending an empty
+ * string, which risks the same kind of validation rejection we saw before).
+ * Response carries the redirect URL as `cardRedirectionUrl` — the user
+ * completes payment (incl. 3-D Secure) there; final status arrives via
+ * webhook, or can be polled with checkCollectionStatus().
  */
 async function initiateCardCollection({
   referenceId, amount, narration, currency = 'ZMW',
   firstName, lastName, email = '', phone = '',
-  city = 'Lusaka', country = 'ZM', address = '', zip = '',
+  city = 'Lusaka', country = 'ZM', address = 'N/A', zip = '00000',
 }) {
+  const fallbackBackUrl = FRONTEND_URL ? `${FRONTEND_URL}/wallet` : 'https://chilimba-application-client.vercel.app/wallet';
   const res = await request('POST', '/collections/card', {
     customerInfo: {
       firstName: firstName || 'Chilimba',
       lastName:  lastName  || 'User',
-      phoneNumber: phone,
+      phoneNumber: phone || '260000000000',
       city, country, address, zip,
-      email,
+      email: email || 'no-reply@chilimba.app',
     },
     collectionRequest: {
       referenceId,
       amount,
       narration,
-      accountNumber: email || phone, // Lipila uses this as the payer's identifier for card txns
+      accountNumber: phone || email || 'unknown', // identifier for the payer, per Lipila's own example
       currency,
-      backUrl: FRONTEND_URL ? `${FRONTEND_URL}/wallet` : undefined,
+      backUrl: fallbackBackUrl,
       referenceData: narration,
     },
   });
@@ -196,6 +201,15 @@ async function checkDisbursementStatus(referenceId) {
 }
 
 /**
+ * Check the current status of a collection (mobile money or card) directly
+ * with Lipila — same referenceId used to create the collection.
+ * Docs: https://docs.lipila.dev/docs/collections/ (Collections Status)
+ */
+async function checkCollectionStatus(referenceId) {
+  return request('GET', `/collections/check-status?referenceId=${encodeURIComponent(referenceId)}`, null);
+}
+
+/**
  * Fetch current platform Lipila wallet balance.
  */
 async function getBalance() {
@@ -209,5 +223,6 @@ module.exports = {
   initiateDisbursement,
   initiateBankDisbursement,
   checkDisbursementStatus,
+  checkCollectionStatus,
   getBalance,
 };
