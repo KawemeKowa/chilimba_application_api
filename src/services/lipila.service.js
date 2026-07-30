@@ -1,5 +1,6 @@
-const https  = require('https');
-const http   = require('http');
+const https   = require('https');
+const http    = require('http');
+const crypto  = require('crypto');
 const { URL } = require('url');
 const logger  = require('../config/logger');
 
@@ -13,6 +14,16 @@ function getApiKey() {
   const key = process.env.LIPILA_API_KEY;
   if (!key) throw new Error('LIPILA_API_KEY is not set — add it to your Railway environment variables');
   return key;
+}
+
+/**
+ * Every Lipila example referenceId is a short hex string with no hyphens
+ * (e.g. "f95a8f405ed1", "a9a2") — unlike crypto.randomUUID(), which includes
+ * hyphens and is longer. Use this everywhere a referenceId is generated to
+ * stay inside whatever length/character constraint their API enforces.
+ */
+function generateReferenceId() {
+  return crypto.randomBytes(16).toString('hex'); // 32 hex chars, no hyphens
 }
 
 function request(method, path, body) {
@@ -59,7 +70,13 @@ function request(method, path, body) {
         try {
           const parsed = JSON.parse(raw);
           if (res.statusCode >= 400) {
-            const err = new Error(parsed.message || parsed.detail || `Lipila error ${res.statusCode}`);
+            // ASP.NET-style validation errors: { title: "One or more errors occurred!", errors: { Field: ["msg"] } }
+            const fieldErrors = parsed.errors
+              ? Object.entries(parsed.errors).map(([field, msgs]) => `${field}: ${[].concat(msgs).join(', ')}`).join(' | ')
+              : null;
+            const msg = fieldErrors || parsed.message || parsed.detail || parsed.title || `Lipila error ${res.statusCode}`;
+            logger.error(`[lipila] ${method} ${path} → ${res.statusCode}: ${JSON.stringify(parsed)}`);
+            const err = new Error(msg);
             err.statusCode = res.statusCode;
             err.lipila = parsed;
             return reject(err);
@@ -186,6 +203,7 @@ async function getBalance() {
 }
 
 module.exports = {
+  generateReferenceId,
   initiateCollection,
   initiateCardCollection,
   initiateDisbursement,
