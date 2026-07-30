@@ -227,9 +227,19 @@ const getGroupDetail = async (req, res, next) => {
       [groupId]
     );
 
+    // The logged-in member's own accumulated balance within this group
+    const myWalletResult = await query(
+      `SELECT balance FROM wallets WHERE owner_id = $1 AND type = 'group' AND group_id = $2`,
+      [req.user.id, groupId]
+    );
+
     res.json({
       success: true,
-      data: { ...normalizeGroup(groupResult.rows[0]), members: membersResult.rows.map(normalizeMember) }
+      data: {
+        ...normalizeGroup(groupResult.rows[0]),
+        members: membersResult.rows.map(normalizeMember),
+        myWalletBalance: parseFloat(myWalletResult.rows[0]?.balance || 0),
+      }
     });
   } catch (err) { next(err); }
 };
