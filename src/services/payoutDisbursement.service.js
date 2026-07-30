@@ -1,4 +1,3 @@
-const crypto  = require('crypto');
 const { query } = require('../config/db');
 const lipila  = require('./lipila.service');
 const email   = require('./email.service');
@@ -31,7 +30,7 @@ async function sendPayoutViaLipila({ payout, netPayout, groupId }) {
   const groupName = payout.group_name;
 
   if (user.mobile_number) {
-    const referenceId = crypto.randomUUID();
+    const referenceId = lipila.generateReferenceId();
     email.sendPayoutDisbursed(user, payout, { name: groupName, id: groupId }, referenceId).catch(() => {});
     try {
       const lipilaRes = await lipila.initiateDisbursement({
@@ -49,7 +48,7 @@ async function sendPayoutViaLipila({ payout, netPayout, groupId }) {
   }
 
   if (user.bank_account_number && user.swift_code) {
-    const referenceId = crypto.randomUUID();
+    const referenceId = lipila.generateReferenceId();
     email.sendPayoutDisbursed(user, payout, { name: groupName, id: groupId }, referenceId).catch(() => {});
     try {
       const lipilaRes = await lipila.initiateBankDisbursement({

@@ -1,4 +1,3 @@
-const crypto  = require('crypto');
 const { query, withTransaction } = require('../../config/db');
 const lipila   = require('../../services/lipila.service');
 const email    = require('../../services/email.service');
@@ -46,7 +45,7 @@ const initiateDeposit = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'walletId or groupId is required.' });
     }
 
-    const referenceId = crypto.randomUUID();
+    const referenceId = lipila.generateReferenceId();
 
     // Record pending transaction before calling Lipila
     await query(
