@@ -128,7 +128,10 @@ async function initiateCardCollection({
   firstName, lastName, email = '', phone = '',
   city = 'Lusaka', country = 'ZM', address = 'N/A', zip = '00000',
 }) {
-  const fallbackBackUrl = FRONTEND_URL ? `${FRONTEND_URL}/wallet` : 'https://chilimba-application-client.vercel.app/wallet';
+  // Redirect the popup to a minimal standalone return page (not /wallet, which
+  // would load the whole app inside the little popup window) that self-closes.
+  const frontend = FRONTEND_URL || 'https://chilimba-application-client.vercel.app';
+  const fallbackBackUrl = `${frontend}/payment-return`;
   const res = await request('POST', '/collections/card', {
     customerInfo: {
       firstName: firstName || 'Chilimba',
