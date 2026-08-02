@@ -22,16 +22,21 @@ const generatePayoutSchedule = async (client, groupId, cycleNumber, payoutDay) =
     payoutDate.setHours(0, 0, 0, 0);
 
     const group = await client.query(
-      'SELECT monthly_amount, max_members FROM groups WHERE id = $1',
+      'SELECT monthly_amount FROM groups WHERE id = $1',
       [groupId]
     );
-    const { monthly_amount, max_members } = group.rows[0];
+    const { monthly_amount } = group.rows[0];
+
+    // Expected pot for a round = each active member's monthly contribution.
+    // (Previously this used max_members, which produced absurd amounts for
+    // groups with a large member cap.)
+    const expectedPot = Number(monthly_amount) * members.rows.length;
 
     await client.query(
       `INSERT INTO payout_schedule (group_id, user_id, cycle_number, payout_order, scheduled_date, expected_amount)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (group_id, cycle_number, payout_order) DO NOTHING`,
-      [groupId, member.user_id, cycleNumber, i + 1, payoutDate, monthly_amount * max_members]
+      [groupId, member.user_id, cycleNumber, i + 1, payoutDate, expectedPot]
     );
   }
 };
@@ -62,6 +67,65 @@ const generateContributionRound = async (client, groupId, cycleNumber, roundNumb
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (group_id, user_id, cycle_number, round_number) DO NOTHING`,
       [groupId, member.user_id, cycleNumber, roundNumber, monthly_amount, dueDate, ref]
+    );
+  }
+};
+
+/**
+ * Enroll a newly-joined member into the group's current cycle: give them a
+ * contribution obligation and a slot at the end of the payout schedule.
+ * No-ops on the schedule if it's already locked (post-first-payout).
+ * `exec` is a querier (the pool's `query` or a transaction client's `query`).
+ */
+const enrollMemberInCycle = async (exec, groupId, userId) => {
+  const gRes = await exec(
+    `SELECT monthly_amount, current_cycle, contribution_day, payout_day, schedule_locked
+     FROM groups WHERE id = $1`,
+    [groupId]
+  );
+  if (!gRes.rows.length) return;
+  const g = gRes.rows[0];
+  const cycle = g.current_cycle || 1;
+
+  // Contribution for the current cycle / round 1
+  const dueDate = new Date();
+  dueDate.setDate(g.contribution_day || 1);
+  dueDate.setHours(23, 59, 59, 0);
+  const ref = `CHI-${groupId.slice(0, 8)}-${cycle}-1-${userId.slice(0, 8)}`.toUpperCase();
+  await exec(
+    `INSERT INTO contributions
+       (group_id, user_id, cycle_number, round_number, amount_due, due_date, reference)
+     VALUES ($1, $2, $3, 1, $4, $5, $6)
+     ON CONFLICT (group_id, user_id, cycle_number, round_number) DO NOTHING`,
+    [groupId, userId, cycle, g.monthly_amount, dueDate, ref]
+  );
+
+  // Append to the payout schedule (unless locked)
+  if (!g.schedule_locked) {
+    const ordRes = await exec(
+      `SELECT COALESCE(MAX(payout_order), 0) + 1 AS next FROM payout_schedule
+       WHERE group_id = $1 AND cycle_number = $2`,
+      [groupId, cycle]
+    );
+    const order = ordRes.rows[0].next;
+    const payoutDate = new Date();
+    payoutDate.setDate(g.payout_day || 25);
+    payoutDate.setMonth(payoutDate.getMonth() + order - 1);
+    payoutDate.setHours(0, 0, 0, 0);
+    // expected_amount is refreshed for the whole cycle below
+    await exec(
+      `INSERT INTO payout_schedule (group_id, user_id, cycle_number, payout_order, scheduled_date, expected_amount)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (group_id, cycle_number, payout_order) DO NOTHING`,
+      [groupId, userId, cycle, order, payoutDate, g.monthly_amount]
+    );
+    // Refresh every scheduled row's expected pot = monthly × active members
+    await exec(
+      `UPDATE payout_schedule ps
+       SET expected_amount = $2 * (SELECT COUNT(*) FROM group_members
+                                   WHERE group_id = $1 AND status = 'active')
+       WHERE ps.group_id = $1 AND ps.cycle_number = $3 AND ps.status = 'scheduled'`,
+      [groupId, g.monthly_amount, cycle]
     );
   }
 };
@@ -134,7 +198,7 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
     await client.query(
       `INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after,
          status, reference_id, reference_type, description)
-       VALUES ($1, 'contribution', 'credit', $2, $3, $3 + $2, 'completed', $4, 'contribution', $5)`,
+       VALUES ($1, 'contribution', 'credit', $2, $3, $3::numeric + $2::numeric, 'completed', $4, 'contribution', $5)`,
       [wallet.id, netAmount, wallet.balance, contrib.id, `Contribution - Cycle ${contrib.cycle_number} Rd ${contrib.round_number}`]
     );
 
@@ -143,7 +207,7 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
       await client.query(
         `INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after,
            status, reference_id, reference_type, description)
-         VALUES ($1, 'fee', 'debit', $2, $3, $3 - $2, 'completed', $4, 'contribution', 'Platform fee')`,
+         VALUES ($1, 'fee', 'debit', $2, $3, $3::numeric - $2::numeric, 'completed', $4, 'contribution', 'Platform fee')`,
         [wallet.id, feeAmount, wallet.balance + netAmount, contrib.id]
       );
     }
@@ -263,6 +327,10 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
     );
     const wallet = walletResult.rows[0];
 
+    // The pot actually paid out is what the group collected this cycle (not the
+    // stale expected_amount). Falls back to expected_amount if nothing recorded.
+    const grossPayout = collected > 0 ? collected : Number(sched.expected_amount);
+
     // Fee on payout
     const feeResult = await client.query(
       `SELECT * FROM fees_config WHERE applies_to = 'payout' AND is_active = TRUE LIMIT 1`
@@ -270,11 +338,11 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
     const feeConfig = feeResult.rows[0];
     const feeAmount = feeConfig
       ? feeConfig.fee_type === 'percentage'
-        ? Number(sched.expected_amount) * (Number(feeConfig.value) / 100)
+        ? grossPayout * (Number(feeConfig.value) / 100)
         : Number(feeConfig.value)
       : 0;
 
-    const netPayout = Number(sched.expected_amount) - feeAmount;
+    const netPayout = grossPayout - feeAmount;
 
     // Credit personal wallet
     await client.query(
@@ -286,7 +354,7 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
     await client.query(
       `INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after,
          status, reference_id, reference_type, description)
-       VALUES ($1, 'payout', 'credit', $2, $3, $3 + $2, 'completed', $4, 'payout_schedule', $5)`,
+       VALUES ($1, 'payout', 'credit', $2, $3, $3::numeric + $2::numeric, 'completed', $4, 'payout_schedule', $5)`,
       [wallet.id, netPayout, wallet.balance, sched.id, `Chilimba payout – ${sched.group_name} Cycle ${sched.cycle_number}`]
     );
 
@@ -335,4 +403,4 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
   });
 };
 
-module.exports = { generatePayoutSchedule, generateContributionRound, recordContribution, disbursePayout };
+module.exports = { generatePayoutSchedule, generateContributionRound, enrollMemberInCycle, recordContribution, disbursePayout };

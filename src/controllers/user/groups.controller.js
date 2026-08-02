@@ -1,5 +1,5 @@
 const { query, withTransaction } = require('../../config/db');
-const { generatePayoutSchedule, generateContributionRound } = require('../../services/chilimba.service');
+const { generatePayoutSchedule, generateContributionRound, enrollMemberInCycle } = require('../../services/chilimba.service');
 const { notify, notifyGroup } = require('../../services/notification.service');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
 const slugify = require('slugify');
@@ -225,6 +225,9 @@ const joinGroup = async (req, res, next) => {
        VALUES ($1, $2, 'member', 'active', $3, NOW())`,
       [group.id, req.user.id, nextOrder]
     );
+
+    // Give the new member a contribution obligation + payout slot this cycle
+    await enrollMemberInCycle(query, group.id, req.user.id).catch(() => {});
 
     await notifyGroup(
       group.id, 'group_joined',
@@ -534,6 +537,8 @@ const acceptInvitation = async (req, res, next) => {
          ON CONFLICT (group_id, user_id) DO UPDATE SET status = 'active', joined_at = NOW()`,
         [inv.group_id, req.user.id, payoutOrder]
       );
+      // Give the new member a contribution obligation + payout slot this cycle
+      await enrollMemberInCycle(client.query.bind(client), inv.group_id, req.user.id);
       await client.query(
         `UPDATE group_invitations SET status = 'accepted', accepted_at = NOW() WHERE token = $1`,
         [token]
