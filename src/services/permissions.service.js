@@ -36,13 +36,14 @@ async function getEffectivePermissions(userId, groupId = null) {
       WHERE group_id = $2 AND user_id = $1 AND status = 'active'
     ),
     my_roles AS (
-      -- platform system role
+      -- platform system role (users.role is an enum — cast to text to compare
+      -- against roles.name which is varchar)
       SELECT r.id FROM roles r, me
-        WHERE r.scope = 'platform' AND r.name = me.role
+        WHERE r.scope = 'platform' AND r.name = me.role::text
       UNION
-      -- group system role
+      -- group system role (group_members.role is an enum — cast to text)
       SELECT r.id FROM roles r, gm
-        WHERE $2::uuid IS NOT NULL AND r.scope = 'group' AND r.name = gm.role
+        WHERE $2::uuid IS NOT NULL AND r.scope = 'group' AND r.name = gm.role::text
       UNION
       -- legacy permissions array entries treated as group role names
       SELECT r.id FROM roles r, gm

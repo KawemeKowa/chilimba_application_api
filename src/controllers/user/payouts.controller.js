@@ -16,7 +16,7 @@ const otherMembersWithPermission = async (groupId, permission, excludeUserId) =>
          SELECT 1 FROM roles ro JOIN role_permissions rp ON rp.role_id = ro.id
          WHERE rp.permission IN ($3, '*')
            AND (
-             (ro.scope = 'group' AND ro.name = gm.role)
+             (ro.scope = 'group' AND ro.name = gm.role::text)
              OR (ro.scope = 'group' AND ro.name = ANY(gm.permissions))
              OR ro.id IN (
                SELECT ur.role_id FROM user_roles ur
