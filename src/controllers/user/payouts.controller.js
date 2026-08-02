@@ -79,6 +79,57 @@ const getPayoutOrder = async (req, res, next) => {
 
     const myPerms = await getEffectivePermissions(req.user.id, groupId);
 
+    // Group constitution bits relevant to disbursing + approval state for the
+    // next scheduled payout so the UI can show the vote progress.
+    const groupRes = await query(
+      `SELECT monthly_amount, contribution_threshold_percent, payout_approval_mode,
+              payout_approvals_required, current_cycle, schedule_locked
+       FROM groups WHERE id = $1`,
+      [groupId]
+    );
+    const g = groupRes.rows[0] || {};
+    const activeCountRes = await query(
+      `SELECT COUNT(*)::int AS n FROM group_members WHERE group_id = $1 AND status = 'active'`,
+      [groupId]
+    );
+    const activeMembers = activeCountRes.rows[0].n || 0;
+    const majority = Math.max(1, Math.ceil((activeMembers + 1) / 2));
+    const approvalsRequired = g.payout_approval_mode === 'majority'
+      ? (g.payout_approvals_required > 0 ? g.payout_approvals_required : majority)
+      : 0;
+
+    const nextPayout = dueRes.rows[0] || null;
+    let nextPayoutApproval = null;
+    if (nextPayout) {
+      const [votesRes, collectedRes] = await Promise.all([
+        query(
+          `SELECT approver_id AS "approverId", action FROM payout_approvals WHERE payout_schedule_id = $1`,
+          [nextPayout.id]
+        ),
+        query(
+          `SELECT COALESCE(SUM(amount_paid),0)::float8 AS collected
+           FROM contributions WHERE group_id = $1 AND cycle_number = $2 AND status IN ('paid','late')`,
+          [groupId, nextPayout.cycleNumber]
+        ),
+      ]);
+      const approved = votesRes.rows.filter(v => v.action === 'approved').length;
+      const collected = Number(collectedRes.rows[0].collected);
+      const expectedPool = Number(g.monthly_amount) * activeMembers;
+      const thresholdPct = g.contribution_threshold_percent ?? 100;
+      nextPayoutApproval = {
+        payoutScheduleId: nextPayout.id,
+        approvalMode: g.payout_approval_mode,
+        approvalsRequired,
+        approvalsCount: approved,
+        votes: votesRes.rows,
+        iVoted: votesRes.rows.some(v => v.approverId === req.user.id),
+        collected,
+        expectedPool,
+        thresholdPercent: thresholdPct,
+        thresholdMet: expectedPool <= 0 || collected + 0.001 >= expectedPool * (thresholdPct / 100),
+      };
+    }
+
     res.json({
       success: true,
       data: {
@@ -87,6 +138,8 @@ const getPayoutOrder = async (req, res, next) => {
         pendingProposal: proposalRes.rows[0] || null,
         myPermissions: myPerms,
         myRole: req.groupMembership.role,
+        scheduleLocked: g.schedule_locked || false,
+        nextPayoutApproval,
       },
     });
   } catch (err) { next(err); }
@@ -114,6 +167,12 @@ const proposePayoutOrder = async (req, res, next) => {
     const myPerms = await getEffectivePermissions(req.user.id, groupId);
     if (!hasPermission(myPerms, 'payout.set_order')) {
       return res.status(403).json({ success: false, message: 'You do not have permission to change the payout order.' });
+    }
+
+    // Constitution: the payout schedule is locked after the first payout.
+    const lockRes = await query(`SELECT schedule_locked FROM groups WHERE id = $1`, [groupId]);
+    if (lockRes.rows[0]?.schedule_locked) {
+      return res.status(409).json({ success: false, message: 'The payout schedule is locked — it cannot be changed after the first payout.' });
     }
 
     let { newOrder } = req.body;
@@ -310,6 +369,53 @@ const setMemberPermission = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// ─── POST /api/groups/:groupId/payouts/:payoutScheduleId/approve ──────────────
+// Any active member (except the recipient) votes to approve/reject the next
+// scheduled payout. Used when the group's payout_approval_mode is 'majority'.
+// Body: { action: 'approved' | 'rejected', comment? }
+const approvePayout = async (req, res, next) => {
+  try {
+    const { groupId, payoutScheduleId } = req.params;
+    const { action, comment } = req.body;
+    if (!['approved', 'rejected'].includes(action)) {
+      return res.status(400).json({ success: false, message: 'Action must be approved or rejected.' });
+    }
+
+    const schedRes = await query(
+      `SELECT ps.id, ps.user_id, ps.status, g.payout_approval_mode
+       FROM payout_schedule ps JOIN groups g ON g.id = ps.group_id
+       WHERE ps.id = $1 AND ps.group_id = $2`,
+      [payoutScheduleId, groupId]
+    );
+    if (!schedRes.rows.length) {
+      return res.status(404).json({ success: false, message: 'Payout not found.' });
+    }
+    const sched = schedRes.rows[0];
+    if (sched.status !== 'scheduled') {
+      return res.status(409).json({ success: false, message: 'This payout has already been processed.' });
+    }
+    if (sched.payout_approval_mode !== 'majority') {
+      return res.status(400).json({ success: false, message: 'This group does not require payout approvals.' });
+    }
+    if (sched.user_id === req.user.id) {
+      return res.status(400).json({ success: false, message: 'You cannot vote on your own payout.' });
+    }
+
+    await query(
+      `INSERT INTO payout_approvals (payout_schedule_id, approver_id, action, comment)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (payout_schedule_id, approver_id)
+       DO UPDATE SET action = EXCLUDED.action, comment = EXCLUDED.comment, created_at = NOW()`,
+      [payoutScheduleId, req.user.id, action, comment || null]
+    );
+
+    notifyGroup(groupId, 'group', 'Payout Vote Recorded',
+      `A member ${action} the pending payout.`, { payoutScheduleId }, req.user.id).catch(() => {});
+
+    res.json({ success: true, message: `Payout ${action}.` });
+  } catch (err) { next(err); }
+};
+
 // ─── POST /api/groups/:groupId/payouts/:payoutScheduleId/disburse ─────────────
 // Approver triggers disbursement for the member who is next in line
 const disburseGroupPayout = async (req, res, next) => {
@@ -356,5 +462,6 @@ module.exports = {
   proposePayoutOrder,
   voteOnProposal,
   setMemberPermission,
+  approvePayout,
   disburseGroupPayout,
 };

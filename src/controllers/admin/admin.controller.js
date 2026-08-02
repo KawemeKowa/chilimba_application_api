@@ -188,7 +188,9 @@ const getPendingPayouts = async (req, res, next) => {
 // POST /api/admin/payouts/:payoutScheduleId/disburse
 const processPayoutDisbursement = async (req, res, next) => {
   try {
-    const result = await disbursePayout(req.params.payoutScheduleId, req.user.id);
+    // Platform admin acts as manual review — the contribution threshold is
+    // still enforced, but the group's member-approval gate is overridden.
+    const result = await disbursePayout(req.params.payoutScheduleId, req.user.id, { skipApprovalCheck: true });
     res.json({
       success: true,
       message: 'Payout disbursed',

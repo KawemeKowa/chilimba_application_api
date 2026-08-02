@@ -28,6 +28,16 @@ function normalizeGroup(g) {
     minApprovalsWithdrawal: g.min_approvals_withdrawal,
     allowLateContributions: g.allow_late_contributions,
     lateFeeAmount: g.late_fee_amount,
+    // ── Constitution ──
+    gracePeriodDays: g.grace_period_days,
+    lateFeeType: g.late_fee_type,
+    lateFeeValue: g.late_fee_value != null ? Number(g.late_fee_value) : 0,
+    payoutOrderMode: g.payout_order_mode,
+    contributionThresholdPercent: g.contribution_threshold_percent,
+    payoutApprovalMode: g.payout_approval_mode,
+    payoutApprovalsRequired: g.payout_approvals_required,
+    scheduleLocked: g.schedule_locked,
+    membersLocked: g.members_locked,
     inviteCode: g.invite_code,
     coverPhotoUrl: g.cover_photo_url,
     createdBy: g.created_by,
@@ -56,14 +66,47 @@ function normalizeMember(m) {
   };
 }
 
+// Majority-vote size for a group of n members (matches the spec table:
+// 2→2, 3→2, 4→3, 5→3, 6→4 ...). Also equals ceil(0.6 * n) for these sizes.
+const majorityOf = (n) => Math.max(1, Math.ceil((Number(n) + 1) / 2));
+
 // POST /api/groups
 const createGroup = async (req, res, next) => {
   try {
     const {
       name, description, monthlyAmount, maxMembers = 12,
       contributionDay = 1, payoutDay = 25, minApprovalsWithdrawal = 2,
-      allowLateContributions = true, lateFeeAmount = 0, currency = 'ZMW'
+      allowLateContributions = true, lateFeeAmount = 0, currency = 'ZMW',
+      // ── Constitution ──
+      gracePeriodDays = 5,
+      lateFeeType = 'none',                 // none | fixed | percentage
+      lateFeeValue = 0,
+      payoutOrderMode = 'fixed',            // fixed | random | admin_assigned
+      contributionThresholdPercent = 100,   // 1..100
+      payoutApprovalMode = 'majority',      // none | majority
+      payoutApprovalsRequired,              // optional explicit count
     } = req.body;
+
+    // Validate enum-ish constitution fields
+    if (!['none', 'fixed', 'percentage'].includes(lateFeeType)) {
+      return res.status(400).json({ success: false, message: 'Invalid late fee type.' });
+    }
+    if (!['fixed', 'random', 'admin_assigned'].includes(payoutOrderMode)) {
+      return res.status(400).json({ success: false, message: 'Invalid payout order mode.' });
+    }
+    if (!['none', 'majority'].includes(payoutApprovalMode)) {
+      return res.status(400).json({ success: false, message: 'Invalid payout approval mode.' });
+    }
+    const threshold = Math.min(100, Math.max(1, parseInt(contributionThresholdPercent) || 100));
+
+    // Approvals required: explicit if provided, else 0 (= auto-derive majority
+    // of active members at disburse time) for 'majority', or 0 for 'none'.
+    let approvalsRequired = 0;
+    if (payoutApprovalMode === 'majority') {
+      approvalsRequired = payoutApprovalsRequired != null && payoutApprovalsRequired !== ''
+        ? Math.max(1, parseInt(payoutApprovalsRequired))
+        : 0;
+    }
 
     const existing = await query(
       `SELECT id FROM groups WHERE LOWER(name) = LOWER($1) LIMIT 1`,
@@ -75,18 +118,24 @@ const createGroup = async (req, res, next) => {
 
     const slug = slugify(`${name}-${Date.now()}`, { lower: true, strict: true });
     const inviteCode = makeInviteCode();
+    // Keep the legacy flat late_fee_amount in sync for older reads
+    const legacyLateFee = lateFeeType === 'fixed' ? Number(lateFeeValue) || 0 : 0;
 
     const result = await withTransaction(async (client) => {
       const groupResult = await client.query(
         `INSERT INTO groups
            (name, description, slug, monthly_amount, currency, max_members,
             contribution_day, payout_day, min_approvals_withdrawal,
-            allow_late_contributions, late_fee_amount, invite_code, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            allow_late_contributions, late_fee_amount, invite_code, created_by,
+            grace_period_days, late_fee_type, late_fee_value, payout_order_mode,
+            contribution_threshold_percent, payout_approval_mode, payout_approvals_required)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
          RETURNING *`,
         [name, description, slug, monthlyAmount, currency, maxMembers,
          contributionDay, payoutDay, minApprovalsWithdrawal,
-         allowLateContributions, lateFeeAmount, inviteCode, req.user.id]
+         allowLateContributions, legacyLateFee, inviteCode, req.user.id,
+         parseInt(gracePeriodDays) || 0, lateFeeType, Number(lateFeeValue) || 0, payoutOrderMode,
+         threshold, payoutApprovalMode, approvalsRequired]
       );
       const group = groupResult.rows[0];
 
@@ -95,6 +144,18 @@ const createGroup = async (req, res, next) => {
         `INSERT INTO group_members (group_id, user_id, role, status, payout_order, joined_at)
          VALUES ($1, $2, 'owner', 'active', 1, NOW())`,
         [group.id, req.user.id]
+      );
+
+      // Immutable audit record of the constitution the group was created with
+      await client.query(
+        `INSERT INTO audit_logs (actor_id, actor_email, action, entity_type, entity_id, changes)
+         VALUES ($1, $2, 'group_created', 'group', $3, $4)`,
+        [req.user.id, req.user.email, group.id, JSON.stringify({
+          monthlyAmount, currency, maxMembers, contributionDay, payoutDay,
+          gracePeriodDays, lateFeeType, lateFeeValue, payoutOrderMode,
+          contributionThresholdPercent: threshold, payoutApprovalMode,
+          payoutApprovalsRequired: approvalsRequired,
+        })]
       );
 
       // Generate contributions and payout schedule for cycle 1 / round 1
@@ -307,8 +368,17 @@ const removeMember = async (req, res, next) => {
 
     const [userResult, groupResult] = await Promise.all([
       query('SELECT first_name, last_name, email FROM users WHERE id = $1', [userId]),
-      query('SELECT name FROM groups WHERE id = $1', [groupId]),
+      query('SELECT name, members_locked FROM groups WHERE id = $1', [groupId]),
     ]);
+
+    // Constitution: membership is locked after the first payout — a member
+    // must be replaced (invite a new member) rather than simply removed.
+    if (groupResult.rows[0]?.members_locked) {
+      return res.status(409).json({
+        success: false,
+        message: 'Membership is locked after the first payout. Invite a replacement member before removing anyone.',
+      });
+    }
 
     await query(
       `UPDATE group_members SET status = 'removed', removed_at = NOW()

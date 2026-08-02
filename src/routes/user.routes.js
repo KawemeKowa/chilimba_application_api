@@ -56,6 +56,13 @@ groupsRouter.post('/', authenticate, uploadPhoto, [
   body('contributionDay').optional().isInt({ min: 1, max: 28 }),
   body('payoutDay').optional().isInt({ min: 1, max: 28 }),
   body('currency').optional().isIn(['ZMW', 'USD', 'EUR', 'GBP', 'ZAR']),
+  body('gracePeriodDays').optional().isInt({ min: 0, max: 60 }),
+  body('lateFeeType').optional().isIn(['none', 'fixed', 'percentage']),
+  body('lateFeeValue').optional().isFloat({ min: 0 }),
+  body('payoutOrderMode').optional().isIn(['fixed', 'random', 'admin_assigned']),
+  body('contributionThresholdPercent').optional().isInt({ min: 1, max: 100 }),
+  body('payoutApprovalMode').optional().isIn(['none', 'majority']),
+  body('payoutApprovalsRequired').optional({ checkFalsy: true }).isInt({ min: 1 }),
 ], groupsCtrl.createGroup);
 
 groupsRouter.post('/join', authenticate, [
@@ -94,6 +101,10 @@ groupsRouter.post('/:groupId/members/:userId/permissions', authenticate, require
   body('permission').equals('approver'),
   body('grant').isBoolean(),
 ], validate, payoutsCtrl.setMemberPermission);
+groupsRouter.post('/:groupId/payouts/:payoutScheduleId/approve', authenticate, requireGroupMember, [
+  body('action').isIn(['approved', 'rejected']),
+  body('comment').optional().trim(),
+], validate, payoutsCtrl.approvePayout);
 groupsRouter.post('/:groupId/payouts/:payoutScheduleId/disburse', authenticate, requireGroupMember, payoutsCtrl.disburseGroupPayout);
 
 // ── contributions.routes.js ──

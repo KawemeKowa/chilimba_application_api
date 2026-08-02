@@ -74,7 +74,8 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
   return withTransaction(async (client) => {
     // Lock contribution
     const contribResult = await client.query(
-      `SELECT c.*, g.id AS group_id, g.name AS group_name
+      `SELECT c.*, g.id AS group_id, g.name AS group_name,
+              g.grace_period_days, g.late_fee_type, g.late_fee_value, g.monthly_amount
        FROM contributions c JOIN groups g ON g.id = c.group_id
        WHERE c.id = $1 AND c.user_id = $2
        FOR UPDATE`,
@@ -84,6 +85,21 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
 
     const contrib = contribResult.rows[0];
     if (contrib.status === 'paid') throw Object.assign(new Error('Already paid'), { status: 409 });
+
+    // Late assessment uses the group's grace period: only late once the due
+    // date PLUS the grace window has passed. The group's own late fee (fixed
+    // or percentage of the monthly amount) is recorded separately from any
+    // platform fee below.
+    const graceDays = contrib.grace_period_days ?? 0;
+    const graceCutoff = new Date(contrib.due_date);
+    graceCutoff.setDate(graceCutoff.getDate() + Number(graceDays));
+    const isLate = new Date() > graceCutoff;
+    let groupLateFee = 0;
+    if (isLate && contrib.late_fee_type === 'fixed') {
+      groupLateFee = Number(contrib.late_fee_value) || 0;
+    } else if (isLate && contrib.late_fee_type === 'percentage') {
+      groupLateFee = Number(contrib.monthly_amount) * (Number(contrib.late_fee_value) / 100);
+    }
 
     // Get or create group wallet
     const walletResult = await client.query(
@@ -132,14 +148,13 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
       );
     }
 
-    const isLate = new Date() > new Date(contrib.due_date);
-
-    // Mark contribution paid
+    // Mark contribution paid (isLate + groupLateFee computed above from the
+    // group's grace period and late-fee rule)
     await client.query(
       `UPDATE contributions
        SET status = $1, amount_paid = amount_due, paid_at = NOW(), late_fee_charged = $2
        WHERE id = $3`,
-      [isLate ? 'late' : 'paid', feeAmount, contributionId]
+      [isLate ? 'late' : 'paid', groupLateFee, contributionId]
     );
 
     // Audit
@@ -159,17 +174,27 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
       payerUserId
     );
 
-    return { contribution: contrib, feeCharged: feeAmount, netAmount };
+    return { contribution: contrib, feeCharged: feeAmount, lateFee: groupLateFee, isLate, netAmount };
   });
 };
 
+// Majority-vote size for n members (2→2, 3→2, 4→3, 5→3, 6→4 ...).
+const majorityOf = (n) => Math.max(1, Math.ceil((Number(n) + 1) / 2));
+
 /**
  * Disburse the scheduled payout for the current round to the recipient.
+ * Enforces the group constitution: the contribution threshold must be met,
+ * and — unless the caller overrides (platform admin manual review) — the
+ * payout must have the required approvals when the group uses majority voting.
+ * The first successful payout locks the schedule and membership.
  */
-const disbursePayout = async (payoutScheduleId, adminUserId) => {
+const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
+  const { skipApprovalCheck = false } = options;
   return withTransaction(async (client) => {
     const schedResult = await client.query(
       `SELECT ps.*, g.monthly_amount, g.max_members, g.name AS group_name,
+              g.contribution_threshold_percent, g.payout_approval_mode,
+              g.payout_approvals_required, g.current_cycle,
               u.first_name || ' ' || u.last_name AS recipient_name
        FROM payout_schedule ps
        JOIN groups g ON g.id = ps.group_id
@@ -181,6 +206,52 @@ const disbursePayout = async (payoutScheduleId, adminUserId) => {
     if (!schedResult.rows.length) throw Object.assign(new Error('Payout not found or already processed'), { status: 404 });
 
     const sched = schedResult.rows[0];
+
+    // Active member count for this group (drives expected pool + auto majority)
+    const memberCountRes = await client.query(
+      `SELECT COUNT(*)::int AS n FROM group_members WHERE group_id = $1 AND status = 'active'`,
+      [sched.group_id]
+    );
+    const activeMembers = memberCountRes.rows[0].n || 0;
+
+    // ── Rule 1: contribution threshold before payout ──
+    const thresholdPercent = sched.contribution_threshold_percent ?? 100;
+    const collectedRes = await client.query(
+      `SELECT COALESCE(SUM(amount_paid), 0)::float8 AS collected
+       FROM contributions
+       WHERE group_id = $1 AND cycle_number = $2 AND status IN ('paid', 'late')`,
+      [sched.group_id, sched.cycle_number]
+    );
+    const collected = Number(collectedRes.rows[0].collected);
+    const expectedPool = Number(sched.monthly_amount) * activeMembers;
+    const requiredCollected = expectedPool * (thresholdPercent / 100);
+    if (expectedPool > 0 && collected + 0.001 < requiredCollected) {
+      throw Object.assign(new Error(
+        `Contribution threshold not met: ${thresholdPercent}% required ` +
+        `(${sched.monthly_amount} × ${activeMembers} = ${expectedPool.toFixed(2)} expected, ` +
+        `need ${requiredCollected.toFixed(2)}, collected ${collected.toFixed(2)}).`
+      ), { status: 409 });
+    }
+
+    // ── Rule 2: payout approval (majority vote) ──
+    if (!skipApprovalCheck && sched.payout_approval_mode === 'majority') {
+      const required = sched.payout_approvals_required > 0
+        ? sched.payout_approvals_required
+        : majorityOf(activeMembers);
+      const approvalsRes = await client.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE action = 'approved')::int AS approved,
+           COUNT(*) FILTER (WHERE action = 'rejected')::int AS rejected
+         FROM payout_approvals WHERE payout_schedule_id = $1`,
+        [payoutScheduleId]
+      );
+      const approved = approvalsRes.rows[0].approved || 0;
+      if (approved < required) {
+        throw Object.assign(new Error(
+          `Payout needs ${required} approval${required !== 1 ? 's' : ''} before it can be disbursed (has ${approved}).`
+        ), { status: 409 });
+      }
+    }
 
     // Get recipient personal wallet
     const walletResult = await client.query(
@@ -227,11 +298,20 @@ const disbursePayout = async (payoutScheduleId, adminUserId) => {
       [netPayout, payoutScheduleId]
     );
 
+    // First payout locks the payout schedule and membership (constitution rule)
+    await client.query(
+      `UPDATE groups SET schedule_locked = TRUE, members_locked = TRUE, updated_at = NOW()
+       WHERE id = $1 AND (schedule_locked = FALSE OR members_locked = FALSE)`,
+      [sched.group_id]
+    );
+
     // Audit
     await client.query(
-      `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id)
-       VALUES ($1, 'payout_disbursed', 'payout_schedule', $2)`,
-      [adminUserId, payoutScheduleId]
+      `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, changes)
+       VALUES ($1, 'payout_disbursed', 'payout_schedule', $2, $3)`,
+      [adminUserId, payoutScheduleId, JSON.stringify({
+        recipientId: sched.user_id, amount: netPayout, cycle: sched.cycle_number,
+      })]
     );
 
     // Notify recipient + group
