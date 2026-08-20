@@ -1,6 +1,15 @@
 const { query, withTransaction } = require('../config/db');
 const { notifyGroup, notify } = require('./notification.service');
 
+// Set a date to the given day-of-month, clamped to the month's last day so a
+// deadline of "31" lands on Feb 28/29, Apr 30, etc. rather than rolling over.
+function setDayClamped(date, day) {
+  date.setDate(1); // avoid rollover while the month is still being set
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  date.setDate(Math.min(Number(day) || 1, lastDay));
+  return date;
+}
+
 /**
  * Generate payout schedule for a new cycle.
  * Assigns each active member one round in random/assigned order.
@@ -15,10 +24,10 @@ const generatePayoutSchedule = async (client, groupId, cycleNumber, payoutDay) =
 
   for (let i = 0; i < members.rows.length; i++) {
     const member = members.rows[i];
-    // Calculate payout date: month i+1 of the cycle, on payout_day
+    // Calculate payout date: month i+1 of the cycle, on payout_day (clamped)
     const payoutDate = new Date();
-    payoutDate.setDate(payoutDay);
     payoutDate.setMonth(payoutDate.getMonth() + i);
+    setDayClamped(payoutDate, payoutDay);
     payoutDate.setHours(0, 0, 0, 0);
 
     const group = await client.query(
@@ -56,7 +65,7 @@ const generateContributionRound = async (client, groupId, cycleNumber, roundNumb
   const { monthly_amount } = group.rows[0];
 
   const dueDate = new Date();
-  dueDate.setDate(contributionDay);
+  setDayClamped(dueDate, contributionDay);
   dueDate.setHours(23, 59, 59, 0);
 
   for (const member of members.rows) {
@@ -89,7 +98,7 @@ const enrollMemberInCycle = async (exec, groupId, userId) => {
 
   // Contribution for the current cycle / round 1
   const dueDate = new Date();
-  dueDate.setDate(g.contribution_day || 1);
+  setDayClamped(dueDate, g.contribution_day || 1);
   dueDate.setHours(23, 59, 59, 0);
   const ref = `CHI-${groupId.slice(0, 8)}-${cycle}-1-${userId.slice(0, 8)}`.toUpperCase();
   await exec(
@@ -109,8 +118,8 @@ const enrollMemberInCycle = async (exec, groupId, userId) => {
     );
     const order = ordRes.rows[0].next;
     const payoutDate = new Date();
-    payoutDate.setDate(g.payout_day || 25);
     payoutDate.setMonth(payoutDate.getMonth() + order - 1);
+    setDayClamped(payoutDate, g.payout_day || 25);
     payoutDate.setHours(0, 0, 0, 0);
     // expected_amount is refreshed for the whole cycle below
     await exec(

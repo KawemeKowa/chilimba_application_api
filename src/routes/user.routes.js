@@ -52,9 +52,9 @@ const { requireGroupMember, requireGroupAdmin } = require('../middleware/rbac');
 groupsRouter.post('/', authenticate, uploadPhoto, [
   body('name').trim().notEmpty().isLength({ max: 150 }),
   body('monthlyAmount').isFloat({ min: 1 }),
-  body('maxMembers').optional().isInt({ min: 2, max: 5000 }),
-  body('contributionDay').optional().isInt({ min: 1, max: 28 }),
-  body('payoutDay').optional().isInt({ min: 1, max: 28 }),
+  body('maxMembers').optional().isInt({ min: 2, max: 1000000 }),
+  body('contributionDay').optional().isInt({ min: 1, max: 31 }),
+  body('payoutDay').optional().isInt({ min: 1, max: 31 }),
   body('currency').optional().isIn(['ZMW', 'USD', 'EUR', 'GBP', 'ZAR']),
   body('gracePeriodDays').optional().isInt({ min: 0, max: 60 }),
   body('lateFeeType').optional().isIn(['none', 'fixed', 'percentage']),
