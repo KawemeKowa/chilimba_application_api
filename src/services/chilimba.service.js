@@ -119,10 +119,12 @@ const enrollMemberInCycle = async (exec, groupId, userId) => {
        ON CONFLICT (group_id, cycle_number, payout_order) DO NOTHING`,
       [groupId, userId, cycle, order, payoutDate, g.monthly_amount]
     );
-    // Refresh every scheduled row's expected pot = monthly × active members
+    // Refresh every scheduled row's expected pot = monthly × active members.
+    // COUNT() is bigint; cast monthly_amount to numeric so "500.00" isn't
+    // coerced to bigint (which rejects the decimals).
     await exec(
       `UPDATE payout_schedule ps
-       SET expected_amount = $2 * (SELECT COUNT(*) FROM group_members
+       SET expected_amount = $2::numeric * (SELECT COUNT(*) FROM group_members
                                    WHERE group_id = $1 AND status = 'active')
        WHERE ps.group_id = $1 AND ps.cycle_number = $3 AND ps.status = 'scheduled'`,
       [groupId, g.monthly_amount, cycle]

@@ -5,6 +5,7 @@ const { query } = require('../../config/db');
 const email = require('../../services/email.service');
 const storage = require('../../services/storage.service');
 
+
 const generateTokens = (userId, role) => {
   const accessToken = jwt.sign(
     { userId, role },
@@ -56,7 +57,9 @@ const register = async (req, res, next) => {
       message: 'Registration successful',
       data: { user, accessToken, refreshToken },
     });
-    email.sendWelcome(user);
+    // Fire-and-forget — deferred + caught so it can never affect the response
+    // already sent (a throw here previously caused ERR_HTTP_HEADERS_SENT).
+    Promise.resolve().then(() => email.sendWelcome(user)).catch(() => {});
   } catch (err) {
     next(err);
   }
