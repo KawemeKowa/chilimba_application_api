@@ -95,6 +95,10 @@ groupsRouter.post('/:groupId/invite', authenticate, requireGroupAdmin, [
   body('email').isEmail().normalizeEmail(),
 ], validate, groupsCtrl.inviteMember);
 
+groupsRouter.get('/:groupId/invitations', authenticate, requireGroupAdmin, groupsCtrl.getGroupInvitations);
+groupsRouter.delete('/:groupId/invitations/:invitationId', authenticate, requireGroupAdmin, groupsCtrl.cancelInvitation);
+groupsRouter.post('/:groupId/activate', authenticate, requireGroupAdmin, groupsCtrl.activateGroup);
+
 // Payout order management + group-level disbursement (approver permission)
 const payoutsCtrl = require('../controllers/user/payouts.controller');
 groupsRouter.get('/:groupId/payout-order', authenticate, requireGroupMember, payoutsCtrl.getPayoutOrder);
@@ -110,7 +114,11 @@ groupsRouter.post('/:groupId/payouts/:payoutScheduleId/approve', authenticate, r
   body('action').isIn(['approved', 'rejected']),
   body('comment').optional().trim(),
 ], validate, payoutsCtrl.approvePayout);
-groupsRouter.post('/:groupId/payouts/:payoutScheduleId/disburse', authenticate, requireGroupMember, payoutsCtrl.disburseGroupPayout);
+groupsRouter.post('/:groupId/payouts/:payoutScheduleId/disburse', authenticate, requireGroupMember, [
+  body('partialAmount').optional().isFloat({ min: 0.01 }),
+], payoutsCtrl.disburseGroupPayout);
+groupsRouter.get('/:groupId/payout-debts', authenticate, requireGroupAdmin, payoutsCtrl.getPayoutDebts);
+groupsRouter.post('/:groupId/payout-debts/:debtId/pay', authenticate, requireGroupAdmin, payoutsCtrl.payPayoutDebt);
 
 // ── contributions.routes.js ──
 const contribRouter = express.Router();

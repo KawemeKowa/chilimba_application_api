@@ -94,7 +94,7 @@ const createGroup = async (req, res, next) => {
     if (!['fixed', 'random', 'admin_assigned'].includes(payoutOrderMode)) {
       return res.status(400).json({ success: false, message: 'Invalid payout order mode.' });
     }
-    if (!['none', 'majority'].includes(payoutApprovalMode)) {
+    if (!['none', 'majority', 'admin'].includes(payoutApprovalMode)) {
       return res.status(400).json({ success: false, message: 'Invalid payout approval mode.' });
     }
     const threshold = Math.min(100, Math.max(1, parseInt(contributionThresholdPercent) || 100));
@@ -128,14 +128,14 @@ const createGroup = async (req, res, next) => {
             contribution_day, payout_day, min_approvals_withdrawal,
             allow_late_contributions, late_fee_amount, invite_code, created_by,
             grace_period_days, late_fee_type, late_fee_value, payout_order_mode,
-            contribution_threshold_percent, payout_approval_mode, payout_approvals_required)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+            contribution_threshold_percent, payout_approval_mode, payout_approvals_required, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
          RETURNING *`,
         [name, description, slug, monthlyAmount, currency, maxMembers,
          contributionDay, payoutDay, minApprovalsWithdrawal,
          allowLateContributions, legacyLateFee, inviteCode, req.user.id,
          parseInt(gracePeriodDays) || 0, lateFeeType, Number(lateFeeValue) || 0, payoutOrderMode,
-         threshold, payoutApprovalMode, approvalsRequired]
+         threshold, payoutApprovalMode, approvalsRequired, 'inactive']
       );
       const group = groupResult.rows[0];
 
@@ -292,10 +292,10 @@ const getGroupDetail = async (req, res, next) => {
     );
 
     // The logged-in member's own accumulated balance within this group
-    const myWalletResult = await query(
-      `SELECT balance FROM wallets WHERE owner_id = $1 AND type = 'group' AND group_id = $2`,
-      [req.user.id, groupId]
-    );
+    const [myWalletResult, pendingInvitesResult] = await Promise.all([
+      query(`SELECT balance FROM wallets WHERE owner_id = $1 AND type = 'group' AND group_id = $2`, [req.user.id, groupId]),
+      query(`SELECT COUNT(*) FROM group_invitations WHERE group_id = $1 AND status = 'pending'`, [groupId]),
+    ]);
 
     res.json({
       success: true,
@@ -303,6 +303,7 @@ const getGroupDetail = async (req, res, next) => {
         ...normalizeGroup(groupResult.rows[0]),
         members: membersResult.rows.map(normalizeMember),
         myWalletBalance: parseFloat(myWalletResult.rows[0]?.balance || 0),
+        pendingInvitationsCount: parseInt(pendingInvitesResult.rows[0]?.count || 0),
       }
     });
   } catch (err) { next(err); }
@@ -552,6 +553,91 @@ const acceptInvitation = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// POST /api/groups/:groupId/activate  — activate an inactive group
+const activateGroup = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+
+    const groupResult = await query('SELECT * FROM groups WHERE id = $1', [groupId]);
+    if (!groupResult.rows.length) return res.status(404).json({ success: false, message: 'Group not found.' });
+    const group = groupResult.rows[0];
+    if (group.status !== 'inactive') return res.status(400).json({ success: false, message: 'Group is already active.' });
+
+    const [pendingInvites, memberCount] = await Promise.all([
+      query(`SELECT COUNT(*) FROM group_invitations WHERE group_id = $1 AND status = 'pending'`, [groupId]),
+      query(`SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND status = 'active'`, [groupId]),
+    ]);
+    if (parseInt(pendingInvites.rows[0].count) > 0) {
+      return res.status(400).json({ success: false, message: 'All pending invitations must be accepted or cancelled before activating.' });
+    }
+    if (parseInt(memberCount.rows[0].count) < 2) {
+      return res.status(400).json({ success: false, message: 'The group needs at least 2 active members before it can be activated.' });
+    }
+
+    // For random order groups: assign random payout positions now
+    if (group.payout_order_mode === 'random') {
+      const members = await query(
+        `SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active' ORDER BY RANDOM()`,
+        [groupId]
+      );
+      for (let i = 0; i < members.rows.length; i++) {
+        await query(
+          `UPDATE group_members SET payout_order = $1 WHERE group_id = $2 AND user_id = $3`,
+          [i + 1, groupId, members.rows[i].user_id]
+        );
+      }
+    }
+
+    await query(`UPDATE groups SET status = 'active' WHERE id = $1`, [groupId]);
+    notify(req.user.id, 'group', 'Group Activated', `${group.name} is now active. The savings cycle has begun!`, { groupId }).catch(() => {});
+    res.json({ success: true, message: `${group.name} has been activated. The savings cycle has begun!` });
+  } catch (err) { next(err); }
+};
+
+// GET /api/groups/:groupId/invitations  — list pending invitations for a group
+const getGroupInvitations = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const result = await query(
+      `SELECT gi.id, gi.email, gi.status, gi.created_at, gi.expires_at,
+              u.first_name AS inviter_first, u.last_name AS inviter_last
+       FROM group_invitations gi
+       JOIN users u ON u.id = gi.invited_by
+       WHERE gi.group_id = $1 AND gi.status = 'pending'
+       ORDER BY gi.created_at DESC`,
+      [groupId]
+    );
+    res.json({
+      success: true,
+      data: result.rows.map(r => ({
+        id: r.id,
+        email: r.email,
+        status: r.status,
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+        invitedBy: { firstName: r.inviter_first, lastName: r.inviter_last },
+      })),
+    });
+  } catch (err) { next(err); }
+};
+
+// DELETE /api/groups/:groupId/invitations/:invitationId  — cancel a pending invitation
+const cancelInvitation = async (req, res, next) => {
+  try {
+    const { groupId, invitationId } = req.params;
+    const result = await query(
+      `UPDATE group_invitations SET status = 'expired'
+       WHERE id = $1 AND group_id = $2 AND status = 'pending'
+       RETURNING id`,
+      [invitationId, groupId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, message: 'Invitation not found or already resolved.' });
+    }
+    res.json({ success: true, message: 'Invitation cancelled.' });
+  } catch (err) { next(err); }
+};
+
 // POST /api/groups/invitations/:token/decline  — decline invitation
 const declineInvitation = async (req, res, next) => {
   try {
@@ -573,4 +659,5 @@ module.exports = {
   createGroup, joinGroup, getMyGroups, getGroupDetail,
   getPayoutSchedule, updateGroup, rotateInviteCode, removeMember,
   inviteMember, getInvitation, acceptInvitation, declineInvitation,
+  getGroupInvitations, cancelInvitation, activateGroup,
 };

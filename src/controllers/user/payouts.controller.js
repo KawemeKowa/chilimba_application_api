@@ -417,10 +417,12 @@ const approvePayout = async (req, res, next) => {
 };
 
 // ─── POST /api/groups/:groupId/payouts/:payoutScheduleId/disburse ─────────────
-// Approver triggers disbursement for the member who is next in line
+// Approver triggers disbursement. If contributions are short, returns a warning
+// so the admin can approve a partial payout by re-calling with { partialAmount }.
 const disburseGroupPayout = async (req, res, next) => {
   try {
     const { groupId, payoutScheduleId } = req.params;
+    const { partialAmount } = req.body || {};
 
     const myPerms = await getEffectivePermissions(req.user.id, groupId);
     if (!hasPermission(myPerms, 'payout.disburse')) {
@@ -441,11 +443,57 @@ const disburseGroupPayout = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Only the next member in the payout order can be disbursed.' });
     }
 
-    const result = await disbursePayout(payoutScheduleId, req.user.id);
+    // Check collected contributions for the current cycle vs expected payout
+    const schedInfoRes = await query(
+      `SELECT ps.expected_amount, ps.cycle_number, ps.user_id,
+              (SELECT COUNT(*)::int FROM group_members WHERE group_id = $2 AND status = 'active') AS active_members
+       FROM payout_schedule ps WHERE ps.id = $1`,
+      [payoutScheduleId, groupId]
+    );
+    const schedInfo = schedInfoRes.rows[0];
+    const expectedAmount = Number(schedInfo.expected_amount);
+
+    const collectedRes = await query(
+      `SELECT COALESCE(SUM(amount_paid), 0)::float8 AS collected
+       FROM contributions
+       WHERE group_id = $1 AND cycle_number = $2 AND status IN ('paid', 'late')`,
+      [groupId, schedInfo.cycle_number]
+    );
+    const collected = Number(collectedRes.rows[0].collected);
+
+    // If contributions are short and admin hasn't explicitly confirmed a partial amount,
+    // return a warning response instead of blocking with an error.
+    if (collected + 0.001 < expectedAmount && partialAmount === undefined) {
+      return res.json({
+        success: true,
+        warning: true,
+        message: `Only ZMW ${collected.toFixed(2)} of ZMW ${expectedAmount.toFixed(2)} has been collected this cycle. You can approve a partial payout.`,
+        data: { availableBalance: collected, expectedAmount },
+      });
+    }
+
+    const isPartial = partialAmount !== undefined && Number(partialAmount) + 0.001 < expectedAmount;
+
+    const result = await disbursePayout(payoutScheduleId, req.user.id, {
+      skipThresholdCheck: isPartial,
+      overrideGrossPayout: partialAmount !== undefined ? Number(partialAmount) : null,
+    });
+
+    // Record debt when a partial amount was disbursed
+    if (isPartial) {
+      const debtAmount = expectedAmount - Number(partialAmount);
+      await query(
+        `INSERT INTO group_payout_debts
+           (group_id, payout_schedule_id, recipient_user_id, cycle_number, amount_owed)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [groupId, payoutScheduleId, schedInfo.user_id, schedInfo.cycle_number, debtAmount]
+      );
+    }
+
     res.json({
       success: true,
-      message: 'Payout disbursed',
-      data: { netPayout: result.netPayout, feeCharged: result.feeCharged },
+      message: isPartial ? `Partial payout disbursed. ZMW ${(expectedAmount - Number(partialAmount)).toFixed(2)} recorded as owed.` : 'Payout disbursed',
+      data: { netPayout: result.netPayout, feeCharged: result.feeCharged, isPartial },
     });
 
     // Fire-and-forget: send the actual money out (MoMo, then bank, then wallet-only fallback)
@@ -457,6 +505,153 @@ const disburseGroupPayout = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// ─── GET /api/groups/:groupId/payout-debts ────────────────────────────────────
+const getPayoutDebts = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const result = await query(
+      `SELECT gpd.*,
+              u.first_name, u.last_name,
+              ps.scheduled_date, ps.expected_amount
+       FROM group_payout_debts gpd
+       JOIN users u ON u.id = gpd.recipient_user_id
+       JOIN payout_schedule ps ON ps.id = gpd.payout_schedule_id
+       WHERE gpd.group_id = $1
+       ORDER BY gpd.created_at DESC`,
+      [groupId]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) { next(err); }
+};
+
+// ─── POST /api/groups/:groupId/payout-debts/:debtId/pay ──────────────────────
+const payPayoutDebt = async (req, res, next) => {
+  try {
+    const { groupId, debtId } = req.params;
+
+    const myPerms = await getEffectivePermissions(req.user.id, groupId);
+    if (!hasPermission(myPerms, 'payout.disburse')) {
+      return res.status(403).json({ success: false, message: 'You do not have permission to trigger disbursements.' });
+    }
+
+    // Quick check outside the transaction for an early 404
+    const debtCheck = await query(
+      `SELECT id FROM group_payout_debts WHERE id = $1 AND group_id = $2 AND status = 'outstanding'`,
+      [debtId, groupId]
+    );
+    if (!debtCheck.rows.length) {
+      return res.status(404).json({ success: false, message: 'Debt not found or already paid.' });
+    }
+
+    const result = await withTransaction(async (client) => {
+      // Lock the debt row to prevent double-payment
+      const debtRes = await client.query(
+        `SELECT gpd.*, u.first_name, u.last_name
+         FROM group_payout_debts gpd
+         JOIN users u ON u.id = gpd.recipient_user_id
+         WHERE gpd.id = $1 AND gpd.group_id = $2 AND gpd.status = 'outstanding'
+         FOR UPDATE`,
+        [debtId, groupId]
+      );
+      if (!debtRes.rows.length) throw Object.assign(new Error('Debt not found or already paid.'), { status: 404 });
+
+      const debt = debtRes.rows[0];
+      const amountOwed = Number(debt.amount_owed) - Number(debt.amount_paid);
+
+      // Verify sufficient new contributions exist to cover the debt.
+      // gross_already_disbursed = expected_amount - amount_owed (stored at creation time)
+      const schedRes = await client.query(
+        'SELECT expected_amount FROM payout_schedule WHERE id = $1',
+        [debt.payout_schedule_id]
+      );
+      const expectedAmount = Number(schedRes.rows[0].expected_amount);
+      const grossAlreadyDisbursed = expectedAmount - Number(debt.amount_owed);
+
+      const collectedRes = await client.query(
+        `SELECT COALESCE(SUM(amount_paid), 0)::float8 AS collected
+         FROM contributions
+         WHERE group_id = $1 AND cycle_number = $2 AND status IN ('paid', 'late')`,
+        [groupId, debt.cycle_number]
+      );
+      const collected = Number(collectedRes.rows[0].collected);
+      const availableForDebt = collected - grossAlreadyDisbursed;
+
+      if (availableForDebt + 0.001 < amountOwed) {
+        throw Object.assign(new Error(
+          `Insufficient contributions. Available: ZMW ${availableForDebt.toFixed(2)}, needed: ZMW ${amountOwed.toFixed(2)}.`
+        ), { status: 409 });
+      }
+
+      // Fee on this debt payment
+      const feeResult = await client.query(
+        `SELECT * FROM fees_config WHERE applies_to = 'payout' AND is_active = TRUE LIMIT 1`
+      );
+      const feeConfig = feeResult.rows[0];
+      const feeAmount = feeConfig
+        ? feeConfig.fee_type === 'percentage'
+          ? amountOwed * (Number(feeConfig.value) / 100)
+          : Number(feeConfig.value)
+        : 0;
+      const netPayout = amountOwed - feeAmount;
+
+      // Get or create recipient personal wallet
+      const walletResult = await client.query(
+        `INSERT INTO wallets (owner_id, type, currency)
+         VALUES ($1, 'personal', 'ZMW')
+         ON CONFLICT (owner_id, type, group_id) DO UPDATE SET updated_at = NOW()
+         RETURNING *`,
+        [debt.recipient_user_id]
+      );
+      const wallet = walletResult.rows[0];
+
+      // Credit personal wallet
+      await client.query(
+        'UPDATE wallets SET balance = balance + $1 WHERE id = $2',
+        [netPayout, wallet.id]
+      );
+
+      const groupNameRes = await client.query('SELECT name FROM groups WHERE id = $1', [groupId]);
+      const groupName = groupNameRes.rows[0]?.name || 'Group';
+
+      // Transaction record
+      await client.query(
+        `INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after,
+           status, reference_id, reference_type, description)
+         VALUES ($1, 'payout', 'credit', $2, $3, $3::numeric + $2::numeric, 'completed', $4, 'payout_debt', $5)`,
+        [wallet.id, netPayout, wallet.balance, debtId, `Owed payout – ${groupName} Cycle ${debt.cycle_number}`]
+      );
+
+      // Mark debt as paid
+      await client.query(
+        `UPDATE group_payout_debts
+         SET status = 'paid', amount_paid = amount_owed, paid_at = NOW()
+         WHERE id = $1`,
+        [debtId]
+      );
+
+      // Audit
+      await client.query(
+        `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, changes)
+         VALUES ($1, 'payout_debt_paid', 'payout_debt', $2, $3)`,
+        [req.user.id, debtId, JSON.stringify({ recipientId: debt.recipient_user_id, amount: netPayout })]
+      );
+
+      // Notify recipient
+      notify(
+        debt.recipient_user_id,
+        'payout_disbursed',
+        `💰 Owed Payout – ${groupName}`,
+        `ZMW ${netPayout.toFixed(2)} has been credited to your wallet.`,
+        { amount: netPayout, groupId }
+      ).catch(() => {});
+
+      return { netPayout, feeCharged: feeAmount, recipientName: `${debt.first_name} ${debt.last_name}` };
+    });
+
+    res.json({ success: true, message: 'Owed payout disbursed', data: result });
+  } catch (err) { next(err); }
+};
+
 module.exports = {
   getPayoutOrder,
   proposePayoutOrder,
@@ -464,4 +659,6 @@ module.exports = {
   setMemberPermission,
   approvePayout,
   disburseGroupPayout,
+  getPayoutDebts,
+  payPayoutDebt,
 };

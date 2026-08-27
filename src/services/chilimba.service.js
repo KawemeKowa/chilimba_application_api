@@ -264,7 +264,7 @@ const majorityOf = (n) => Math.max(1, Math.ceil((Number(n) + 1) / 2));
  * The first successful payout locks the schedule and membership.
  */
 const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
-  const { skipApprovalCheck = false } = options;
+  const { skipApprovalCheck = false, skipThresholdCheck = false, overrideGrossPayout = null } = options;
   return withTransaction(async (client) => {
     const schedResult = await client.query(
       `SELECT ps.*, g.monthly_amount, g.max_members, g.name AS group_name,
@@ -290,6 +290,7 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
     const activeMembers = memberCountRes.rows[0].n || 0;
 
     // ── Rule 1: contribution threshold before payout ──
+    // Skipped when admin has explicitly approved a partial payout amount.
     const thresholdPercent = sched.contribution_threshold_percent ?? 100;
     const collectedRes = await client.query(
       `SELECT COALESCE(SUM(amount_paid), 0)::float8 AS collected
@@ -300,7 +301,7 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
     const collected = Number(collectedRes.rows[0].collected);
     const expectedPool = Number(sched.monthly_amount) * activeMembers;
     const requiredCollected = expectedPool * (thresholdPercent / 100);
-    if (expectedPool > 0 && collected + 0.001 < requiredCollected) {
+    if (!skipThresholdCheck && expectedPool > 0 && collected + 0.001 < requiredCollected) {
       throw Object.assign(new Error(
         `Contribution threshold not met: ${thresholdPercent}% required ` +
         `(${sched.monthly_amount} × ${activeMembers} = ${expectedPool.toFixed(2)} expected, ` +
@@ -340,7 +341,10 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
 
     // The pot actually paid out is what the group collected this cycle (not the
     // stale expected_amount). Falls back to expected_amount if nothing recorded.
-    const grossPayout = collected > 0 ? collected : Number(sched.expected_amount);
+    // For partial payouts, admin explicitly sets the override amount.
+    const grossPayout = overrideGrossPayout !== null
+      ? Number(overrideGrossPayout)
+      : (collected > 0 ? collected : Number(sched.expected_amount));
 
     // Fee on payout
     const feeResult = await client.query(
