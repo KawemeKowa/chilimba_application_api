@@ -218,6 +218,20 @@ async function seed() {
   const B = uid['bwalya@example.com'], M = uid['mwansa@example.com'], C = uid['chipo@example.com'];
   const N = uid['natasha@example.com'], K = uid['kabwe@example.com'], T = uid['temba@example.com'];
 
+  // ── KYC states for testing the review flow ──
+  // Mutale: submitted, awaiting admin review (placeholder ID images)
+  await q(
+    `UPDATE users SET id_type='national_id', id_number='123456/78/9',
+            id_front_url='https://placehold.co/600x380?text=ID+Front',
+            id_back_url='https://placehold.co/600x380?text=ID+Back',
+            kyc_submitted_at=NOW(), kyc_rejection_reason=NULL, id_verified=FALSE
+     WHERE id=$1`, [uid['mutale@example.com']]);
+  // Active members are already verified
+  for (const e of ['bwalya@example.com','mwansa@example.com','chipo@example.com','natasha@example.com','kabwe@example.com','temba@example.com']) {
+    await q(`UPDATE users SET id_verified=TRUE, id_type='national_id', id_number='000000/00/0' WHERE id=$1`, [uid[e]]);
+  }
+  console.log('  ✅ KYC: mutale has a pending submission to review; active members verified');
+
   // ══ GROUP A — Lusaka North: majority approval, 100% threshold, READY TO DISBURSE ══
   {
     const gid = await upsertGroup({

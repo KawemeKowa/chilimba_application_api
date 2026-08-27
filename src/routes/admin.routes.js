@@ -40,6 +40,9 @@ adminRouter.patch('/users/:userId/status', [
   body('reason').optional().trim(),
 ], adminCtrl.updateUserStatus);
 adminRouter.post('/users/:userId/verify', adminCtrl.verifyUser);
+adminRouter.post('/users/:userId/reject-kyc', [
+  body('reason').trim().notEmpty(),
+], adminCtrl.rejectKyc);
 
 // Groups
 adminRouter.get('/groups', adminCtrl.listGroups);

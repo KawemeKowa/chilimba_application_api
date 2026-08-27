@@ -44,7 +44,9 @@ const getUserDetail = async (req, res, next) => {
   try {
     const user = await query(
       `SELECT id, first_name, last_name, email, phone, role, status,
-              date_of_birth, id_type, id_number, id_verified, last_login_at, created_at
+              date_of_birth, id_type, id_number, id_verified,
+              id_front_url, id_back_url, kyc_submitted_at, kyc_rejection_reason,
+              profile_photo_url, last_login_at, created_at
        FROM users WHERE id = $1`,
       [req.params.userId]
     );
@@ -105,8 +107,10 @@ const verifyUser = async (req, res, next) => {
     );
 
     await query(
-      'UPDATE users SET id_verified = TRUE, status = $1 WHERE id = $2',
-      ['active', req.params.userId]
+      `UPDATE users SET id_verified = TRUE, status = 'active',
+              kyc_rejection_reason = NULL, updated_at = NOW()
+       WHERE id = $1`,
+      [req.params.userId]
     );
     await query(
       `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, ip_address)
@@ -115,7 +119,36 @@ const verifyUser = async (req, res, next) => {
     );
     res.json({ success: true, message: 'User verified and activated' });
 
+    notify(req.params.userId, 'system', 'Identity Verified ✅',
+      'Your identity has been verified and your account is now active.', {}).catch(() => {});
     if (userResult.rows.length) email.sendAccountVerified(userResult.rows[0]);
+  } catch (err) { next(err); }
+};
+
+// POST /api/admin/users/:userId/reject-kyc  — reject a KYC submission with a reason
+const rejectKyc = async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ success: false, message: 'A rejection reason is required.' });
+    }
+    const result = await query(
+      `UPDATE users
+         SET id_verified = FALSE, kyc_rejection_reason = $1, kyc_submitted_at = NULL, updated_at = NOW()
+       WHERE id = $2 RETURNING id`,
+      [reason.trim(), req.params.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ success: false, message: 'User not found' });
+
+    await query(
+      `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, changes, ip_address)
+       VALUES ($1, 'user_updated', 'user', $2, $3, $4)`,
+      [req.user.id, req.params.userId, JSON.stringify({ kyc: 'rejected', reason: reason.trim() }), req.ip]
+    );
+    res.json({ success: true, message: 'KYC submission rejected.' });
+
+    notify(req.params.userId, 'system', 'Identity Verification Rejected',
+      `Your ID could not be verified: ${reason.trim()} Please resubmit from your profile.`, {}).catch(() => {});
   } catch (err) { next(err); }
 };
 
@@ -287,7 +320,7 @@ const broadcastNotification = async (req, res, next) => {
 };
 
 module.exports = {
-  listUsers, getUserDetail, updateUserStatus, verifyUser,
+  listUsers, getUserDetail, updateUserStatus, verifyUser, rejectKyc,
   listGroups, updateGroupStatus,
   getPendingPayouts, processPayoutDisbursement,
   listWithdrawals,

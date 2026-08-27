@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { query } = require('../../config/db');
 const email = require('../../services/email.service');
 const storage = require('../../services/storage.service');
+const { notify } = require('../../services/notification.service');
 
 
 const generateTokens = (userId, role) => {
@@ -162,7 +163,9 @@ const getMe = async (req, res, next) => {
   try {
     const result = await query(
       `SELECT id, first_name, last_name, email, phone, role, status,
-              date_of_birth, id_type, id_verified, profile_photo_url, last_login_at, created_at
+              date_of_birth, id_type, id_number, id_verified,
+              id_front_url, id_back_url, kyc_submitted_at, kyc_rejection_reason,
+              profile_photo_url, last_login_at, created_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -170,6 +173,61 @@ const getMe = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+// POST /api/auth/kyc  — submit identity documents for review
+const submitKyc = async (req, res, next) => {
+  try {
+    const { idType, idNumber } = req.body;
+    if (!['national_id', 'passport', 'drivers_license'].includes(idType)) {
+      return res.status(400).json({ success: false, message: 'Select a valid ID type.' });
+    }
+    if (!idNumber || !idNumber.trim()) {
+      return res.status(400).json({ success: false, message: 'ID number is required.' });
+    }
+
+    // Already-approved users don't need to resubmit
+    const current = await query(
+      `SELECT id_verified, id_front_url, id_back_url FROM users WHERE id = $1`, [req.user.id]);
+    if (current.rows[0]?.id_verified) {
+      return res.status(409).json({ success: false, message: 'Your identity is already verified.' });
+    }
+
+    const front = req.files?.idFront?.[0];
+    const back  = req.files?.idBack?.[0];
+    // On first submission both images are required; on resubmission a missing
+    // image keeps the previously uploaded one.
+    const existingFront = current.rows[0]?.id_front_url;
+    const existingBack  = current.rows[0]?.id_back_url;
+    if ((!front && !existingFront) || (!back && !existingBack)) {
+      return res.status(400).json({ success: false, message: 'Both the front and back images of your ID are required.' });
+    }
+
+    let frontUrl = existingFront, backUrl = existingBack;
+    if (front) frontUrl = await storage.uploadFile(`kyc/${req.user.id}/front`, front.buffer, front.mimetype);
+    if (back)  backUrl  = await storage.uploadFile(`kyc/${req.user.id}/back`,  back.buffer,  back.mimetype);
+
+    const result = await query(
+      `UPDATE users
+         SET id_type = $1, id_number = $2, id_front_url = $3, id_back_url = $4,
+             kyc_submitted_at = NOW(), kyc_rejection_reason = NULL, updated_at = NOW()
+       WHERE id = $5
+       RETURNING id, id_type, id_number, id_front_url, id_back_url, kyc_submitted_at, id_verified, status`,
+      [idType, idNumber.trim(), frontUrl, backUrl, req.user.id]
+    );
+
+    // Notify admins that a KYC submission is awaiting review
+    query(`SELECT id FROM users WHERE role IN ('admin','super_admin') AND status = 'active'`)
+      .then(({ rows }) => {
+        for (const a of rows) {
+          notify(a.id, 'system', 'KYC Review Needed',
+            `${req.user.first_name || 'A user'} submitted identity documents for verification.`,
+            { userId: req.user.id }).catch(() => {});
+        }
+      }).catch(() => {});
+
+    res.json({ success: true, message: 'Your ID has been submitted for review.', data: result.rows[0] });
+  } catch (err) { next(err); }
 };
 
 // PATCH /api/auth/me
@@ -294,4 +352,4 @@ const resetPassword = async (req, res, next) => {
   }
 };
 
-module.exports = { register, login, refreshToken, logout, getMe, updateProfile, changePassword, forgotPassword, resetPassword };
+module.exports = { register, login, refreshToken, logout, getMe, submitKyc, updateProfile, changePassword, forgotPassword, resetPassword };

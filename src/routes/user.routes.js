@@ -2,7 +2,7 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const validate = require('../middleware/validate');
-const { uploadPhoto } = require('../middleware/upload');
+const { uploadPhoto, uploadKyc } = require('../middleware/upload');
 
 // ── auth.routes.js ──
 const authRouter = express.Router();
@@ -31,6 +31,11 @@ authRouter.patch('/me', authenticate, uploadPhoto, [
   body('lastName').optional().trim().notEmpty(),
   body('phone').optional().trim().notEmpty(),
 ], authCtrl.updateProfile);
+authRouter.post('/kyc', authenticate, uploadKyc, [
+  body('idType').isIn(['national_id', 'passport', 'drivers_license']),
+  body('idNumber').trim().notEmpty(),
+], authCtrl.submitKyc);
+
 authRouter.post('/change-password', authenticate, [
   body('currentPassword').notEmpty(),
   body('newPassword').isLength({ min: 8 }),

@@ -33,4 +33,16 @@ const uploadPhoto = wrap(
   }).single('photo')
 );
 
-module.exports = { uploadPhoto };
+// KYC: front + back ID images, max 5 MB each
+const uploadKyc = wrap(
+  multer({
+    storage: multer.memoryStorage(),
+    fileFilter: imageFilter,
+    limits: { fileSize: 5 * 1024 * 1024 },
+  }).fields([
+    { name: 'idFront', maxCount: 1 },
+    { name: 'idBack',  maxCount: 1 },
+  ])
+);
+
+module.exports = { uploadPhoto, uploadKyc };
