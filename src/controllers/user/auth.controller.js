@@ -8,6 +8,20 @@ const { notify } = require('../../services/notification.service');
 const { getOrCreatePersonalWallet } = require('../../services/wallet.service');
 
 
+/**
+ * The user shape the client expects. Login and /auth/me must return the same
+ * columns — the client sets `user` straight from the login response and only
+ * re-fetches /auth/me on mount, so anything missing here silently reads as
+ * absent until a full page reload. That is what made a pending KYC submission
+ * look unsubmitted after logging back in.
+ */
+const USER_COLUMNS = `
+  id, first_name, last_name, email, phone, role, status,
+  date_of_birth, id_type, id_number, id_verified,
+  id_front_url, id_back_url, kyc_submitted_at, kyc_rejection_reason,
+  profile_photo_url, last_login_at, created_at
+`;
+
 const generateTokens = (userId, role) => {
   const accessToken = jwt.sign(
     { userId, role },
@@ -77,8 +91,7 @@ const login = async (req, res, next) => {
     const { email, password } = req.body;
 
     const result = await query(
-      `SELECT id, first_name, last_name, email, phone, password_hash, role, status
-       FROM users WHERE email = $1`,
+      `SELECT ${USER_COLUMNS}, password_hash FROM users WHERE email = $1`,
       [email.toLowerCase()]
     );
 
@@ -167,11 +180,7 @@ const logout = async (req, res, next) => {
 const getMe = async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT id, first_name, last_name, email, phone, role, status,
-              date_of_birth, id_type, id_number, id_verified,
-              id_front_url, id_back_url, kyc_submitted_at, kyc_rejection_reason,
-              profile_photo_url, last_login_at, created_at
-       FROM users WHERE id = $1`,
+      `SELECT ${USER_COLUMNS} FROM users WHERE id = $1`,
       [req.user.id]
     );
     res.json({ success: true, data: result.rows[0] });
