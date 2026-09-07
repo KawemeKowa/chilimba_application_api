@@ -142,8 +142,16 @@ const enrollMemberInCycle = async (exec, groupId, userId) => {
 };
 
 /**
- * Record a contribution payment and credit the group wallet.
- * Handles fee deduction and transaction ledger.
+ * Record a contribution payment by DEBITING the member's group wallet.
+ *
+ * Members fund their group wallet first (MoMo top-up via /payments/deposit,
+ * which credits this same wallet), then paying a contribution draws that
+ * balance down. The wallet moves by exactly `amount_due`, split across two
+ * ledger rows — the net that reaches the pot, and the platform fee — so
+ * revenue reporting on type='fee' still works.
+ *
+ * Previously this CREDITED the wallet, which double-counted every payment:
+ * the MoMo deposit credited the wallet once, then paying credited it again.
  */
 const recordContribution = async (contributionId, payerUserId, ipAddress) => {
   return withTransaction(async (client) => {
@@ -176,12 +184,18 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
       groupLateFee = Number(contrib.monthly_amount) * (Number(contrib.late_fee_value) / 100);
     }
 
-    // Get or create group wallet
-    const walletResult = await client.query(
+    // Get or create the member's group wallet, then lock it so the balance we
+    // read is the one we debit (concurrent pays / deposits can't interleave).
+    await client.query(
       `INSERT INTO wallets (owner_id, type, group_id, currency)
        VALUES ($1, 'group', $2, 'ZMW')
-       ON CONFLICT (owner_id, type, group_id) DO UPDATE SET updated_at = NOW()
-       RETURNING *`,
+       ON CONFLICT (owner_id, type, group_id) DO UPDATE SET updated_at = NOW()`,
+      [payerUserId, contrib.group_id]
+    );
+    const walletResult = await client.query(
+      `SELECT * FROM wallets
+       WHERE owner_id = $1 AND type = 'group' AND group_id = $2
+       FOR UPDATE`,
       [payerUserId, contrib.group_id]
     );
     const wallet = walletResult.rows[0];
@@ -197,29 +211,41 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
         : Number(feeConfig.value)
       : 0;
 
-    const netAmount = Number(contrib.amount_due) - feeAmount;
+    const amountDue  = Number(contrib.amount_due);
+    const netAmount  = amountDue - feeAmount;
+    const balanceNow = Number(wallet.balance);
 
-    // Credit group wallet
+    // The member must have funded this wallet before they can pay from it.
+    if (balanceNow + 0.001 < amountDue) {
+      throw Object.assign(new Error(
+        `Insufficient wallet balance. You need ZMW ${amountDue.toFixed(2)} but your ` +
+        `${contrib.group_name} wallet holds ZMW ${balanceNow.toFixed(2)}. ` +
+        `Top up ZMW ${(amountDue - balanceNow).toFixed(2)} and try again.`
+      ), { status: 400 });
+    }
+
+    // Debit the full amount due from the member's group wallet
     await client.query(
-      `UPDATE wallets SET balance = balance + $1 WHERE id = $2`,
-      [netAmount, wallet.id]
+      `UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE id = $2`,
+      [amountDue, wallet.id]
     );
 
-    // Transaction record
+    // Ledger row 1 — the net that reaches the group pot
     await client.query(
       `INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after,
          status, reference_id, reference_type, description)
-       VALUES ($1, 'contribution', 'credit', $2, $3, $3::numeric + $2::numeric, 'completed', $4, 'contribution', $5)`,
-      [wallet.id, netAmount, wallet.balance, contrib.id, `Contribution - Cycle ${contrib.cycle_number} Rd ${contrib.round_number}`]
+       VALUES ($1, 'contribution', 'debit', $2, $3, $3::numeric - $2::numeric, 'completed', $4, 'contribution', $5)`,
+      [wallet.id, netAmount, balanceNow, contrib.id, `Contribution - Cycle ${contrib.cycle_number} Rd ${contrib.round_number}`]
     );
 
-    // Fee transaction
+    // Ledger row 2 — the platform fee (superadmin revenue reads type='fee').
+    // Picks up where row 1 left off so the two together sum to amountDue.
     if (feeAmount > 0) {
       await client.query(
         `INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after,
            status, reference_id, reference_type, description)
          VALUES ($1, 'fee', 'debit', $2, $3, $3::numeric - $2::numeric, 'completed', $4, 'contribution', 'Platform fee')`,
-        [wallet.id, feeAmount, wallet.balance + netAmount, contrib.id]
+        [wallet.id, feeAmount, balanceNow - netAmount, contrib.id]
       );
     }
 
