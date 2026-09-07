@@ -8,10 +8,23 @@ const logger   = require('../../config/logger');
 // POST /api/payments/deposit
 const initiateDeposit = async (req, res, next) => {
   try {
-    const { walletId, groupId, amount, mobileNumber, method = 'mobile_money' } = req.body;
+    const { walletId, groupId, amount, method = 'mobile_money' } = req.body;
+    let { mobileNumber } = req.body;
 
-    if (method === 'mobile_money' && !mobileNumber) {
-      return res.status(400).json({ success: false, message: 'mobileNumber is required for mobile money deposits.' });
+    if (method === 'mobile_money') {
+      if (!mobileNumber) {
+        return res.status(400).json({ success: false, message: 'mobileNumber is required for mobile money deposits.' });
+      }
+      // Accept 0977123456 / +260 97 712 3456 / etc. and store the canonical
+      // 260XXXXXXXXX form — rejecting here avoids leaving a stale pending row.
+      const normalized = lipila.normalizeZmPhone(mobileNumber);
+      if (!normalized) {
+        return res.status(400).json({
+          success: false,
+          message: 'Enter a valid Zambian mobile number, e.g. 0977123456 or 260977123456.',
+        });
+      }
+      mobileNumber = normalized;
     }
 
     let wallet;
@@ -362,6 +375,14 @@ const getPaymentMethods = async (req, res, next) => {
 const saveMobileMoney = async (req, res, next) => {
   try {
     const { mobileNumber, provider } = req.body;
+    // Payouts are sent to this number, so store it in the form Lipila accepts.
+    const normalized = lipila.normalizeZmPhone(mobileNumber);
+    if (!normalized) {
+      return res.status(400).json({
+        success: false,
+        message: 'Enter a valid Zambian mobile number, e.g. 0977123456 or 260977123456.',
+      });
+    }
     await query(
       `INSERT INTO user_payment_methods (user_id, type, mobile_number, mobile_provider)
        VALUES ($1, 'mobile_money', $2, $3)
@@ -369,7 +390,7 @@ const saveMobileMoney = async (req, res, next) => {
          SET mobile_number   = EXCLUDED.mobile_number,
              mobile_provider = EXCLUDED.mobile_provider,
              updated_at      = NOW()`,
-      [req.user.id, mobileNumber, provider]
+      [req.user.id, normalized, provider]
     );
     res.json({ success: true, message: 'Mobile money details saved.' });
   } catch (err) { next(err); }

@@ -26,6 +26,43 @@ function generateReferenceId() {
   return crypto.randomBytes(16).toString('hex'); // 32 hex chars, no hyphens
 }
 
+/**
+ * Lipila rejects anything that isn't 260XXXXXXXXX ("Invalid phone number
+ * format"), but users type 0977123456, +260 97 712 3456, and so on. Normalize
+ * at this boundary so every caller — deposits, payouts using numbers already
+ * saved in the DB — sends the one shape Lipila accepts.
+ *
+ * Zambian subscriber numbers are 9 digits starting with 9 (MTN 96, Airtel 97,
+ * Zamtel 95) or 7 (MTN 76, Airtel 77, Zamtel 75). Returns null when the input
+ * can't be read as one.
+ */
+function normalizeZmPhone(input) {
+  const digits = String(input || '').replace(/\D/g, '');
+  if (!digits) return null;
+
+  let subscriber;
+  if (digits.startsWith('260')) subscriber = digits.slice(3);
+  else if (digits.startsWith('0')) subscriber = digits.slice(1);
+  else subscriber = digits;
+
+  if (!/^[79]\d{8}$/.test(subscriber)) return null;
+  return `260${subscriber}`;
+}
+
+/** Normalize or throw a 400 naming the number that failed. */
+function requireZmPhone(input) {
+  const normalized = normalizeZmPhone(input);
+  if (!normalized) {
+    const err = new Error(
+      `"${input}" is not a valid Zambian mobile number. Use a format like 0977123456 or 260977123456.`
+    );
+    err.status = 400;
+    err.statusCode = 400;
+    throw err;
+  }
+  return normalized;
+}
+
 function request(method, path, body) {
   return new Promise((resolve, reject) => {
     let apiKey;
@@ -104,7 +141,7 @@ async function initiateCollection({ referenceId, amount, phone, narration, curre
   return request('POST', '/collections/mobile-money', {
     referenceId,
     amount,
-    accountNumber: phone,
+    accountNumber: requireZmPhone(phone),
     narration,
     currency,
     email,
@@ -162,7 +199,7 @@ async function initiateDisbursement({ referenceId, amount, phone, narration, cur
   return request('POST', '/disbursements/mobile-money', {
     referenceId,
     amount,
-    accountNumber: phone,
+    accountNumber: requireZmPhone(phone),
     narration,
     currency,
     referenceData: narration,
@@ -221,6 +258,8 @@ async function getBalance() {
 
 module.exports = {
   generateReferenceId,
+  normalizeZmPhone,
+  requireZmPhone,
   initiateCollection,
   initiateCardCollection,
   initiateDisbursement,
