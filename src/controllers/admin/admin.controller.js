@@ -135,7 +135,8 @@ const rejectKyc = async (req, res, next) => {
     const result = await query(
       `UPDATE users
          SET id_verified = FALSE, kyc_rejection_reason = $1, kyc_submitted_at = NULL, updated_at = NOW()
-       WHERE id = $2 RETURNING id`,
+       WHERE id = $2
+       RETURNING id, first_name, last_name, email`,
       [reason.trim(), req.params.userId]
     );
     if (!result.rows.length) return res.status(404).json({ success: false, message: 'User not found' });
@@ -149,6 +150,8 @@ const rejectKyc = async (req, res, next) => {
 
     notify(req.params.userId, 'system', 'Identity Verification Rejected',
       `Your ID could not be verified: ${reason.trim()} Please resubmit from your profile.`, {}).catch(() => {});
+    // Email carries the reason too — the member may not open the app for days
+    email.sendKycRejected(result.rows[0], reason.trim()).catch(() => {});
   } catch (err) { next(err); }
 };
 

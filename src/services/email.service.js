@@ -333,6 +333,23 @@ async function sendAccountVerified(user) {
   await send(user.email, 'Your Chilimba account is verified ✅', html);
 }
 
+// ─── 11b. KYC rejected — tell the member why so they can fix it ──────────────
+
+async function sendKycRejected(user, reason) {
+  const html = layout('Identity Verification Rejected', `
+    ${h1('We couldn&rsquo;t verify your ID')}
+    ${p(`Hi ${user.first_name}, an admin reviewed your identity documents and wasn&rsquo;t able to approve them.`)}
+    ${infoBox([
+      ['Status', badge('NEEDS ATTENTION', '#d97706')],
+      ['Reason', reason],
+      ['Date',   new Date().toUTCString()],
+    ])}
+    ${p('This is usually something small &mdash; a blurry photo, a cut-off edge, or a number that doesn&rsquo;t match the document. Upload clearer photos and resubmit; your details are still saved.')}
+    ${btn('Resubmit your ID', `${APP_URL}/profile`)}
+  `);
+  await send(user.email, 'Action needed: your Chilimba ID verification', html);
+}
+
 // ─── 12. Account status change (suspended / banned) ──────────────────────────
 
 async function sendAccountStatusChanged(user, status, reason) {
@@ -524,6 +541,7 @@ module.exports = {
   sendWithdrawalOutcome,
   sendPayoutDisbursed,
   sendAccountVerified,
+  sendKycRejected,
   sendAccountStatusChanged,
   sendCommitteePoolCreated,
   sendGroupInvitation,
