@@ -74,6 +74,9 @@ const globalLimiter = rateLimit({
   message: { success: false, message: 'Too many requests. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  // Payment status polling has its own, larger budget below. Without this skip
+  // it would be counted twice and still exhaust the global allowance.
+  skip: (req) => req.path === '/payments/sync-status',
 });
 
 const authLimiter = rateLimit({
@@ -81,6 +84,19 @@ const authLimiter = rateLimit({
   max: parseInt(process.env.AUTH_RATE_LIMIT_MAX) || 10,
   message: { success: false, message: 'Too many auth attempts. Please try again after 15 minutes.' },
 });
+
+// The wallet page polls this while a payment is in flight so members don't
+// have to press refresh. That's a legitimately chatty endpoint, so it gets its
+// own allowance — without this it would eat the global budget and 429 the
+// whole app mid-payment.
+const paymentStatusLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PAYMENT_STATUS_RATE_LIMIT_MAX) || 300,
+  message: { success: false, message: 'Too many status checks. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/payments/sync-status', paymentStatusLimiter);
 
 app.use('/api', globalLimiter);
 app.use('/api/auth/login', authLimiter);
