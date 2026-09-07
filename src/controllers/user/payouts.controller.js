@@ -1,6 +1,7 @@
 const { query, withTransaction } = require('../../config/db');
 const { disbursePayout } = require('../../services/chilimba.service');
 const { notify, notifyGroup } = require('../../services/notification.service');
+const { getOrCreatePersonalWallet } = require('../../services/wallet.service');
 const { sendPayoutViaLipila } = require('../../services/payoutDisbursement.service');
 const logger = require('../../config/logger');
 
@@ -594,15 +595,10 @@ const payPayoutDebt = async (req, res, next) => {
         : 0;
       const netPayout = amountOwed - feeAmount;
 
-      // Get or create recipient personal wallet
-      const walletResult = await client.query(
-        `INSERT INTO wallets (owner_id, type, currency)
-         VALUES ($1, 'personal', 'ZMW')
-         ON CONFLICT (owner_id, type, group_id) DO UPDATE SET updated_at = NOW()
-         RETURNING *`,
-        [debt.recipient_user_id]
+      // Recipient's personal wallet, locked before we change the balance
+      const wallet = await getOrCreatePersonalWallet(
+        client.query.bind(client), debt.recipient_user_id, { forUpdate: true }
       );
-      const wallet = walletResult.rows[0];
 
       // Credit personal wallet
       await client.query(

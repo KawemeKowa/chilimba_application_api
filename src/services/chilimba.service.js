@@ -1,5 +1,6 @@
 const { query, withTransaction } = require('../config/db');
 const { notifyGroup, notify } = require('./notification.service');
+const { getOrCreatePersonalWallet, getOrCreateGroupWallet } = require('./wallet.service');
 
 // Set a date to the given day-of-month, clamped to the month's last day so a
 // deadline of "31" lands on Feb 28/29, Apr 30, etc. rather than rolling over.
@@ -184,21 +185,11 @@ const recordContribution = async (contributionId, payerUserId, ipAddress) => {
       groupLateFee = Number(contrib.monthly_amount) * (Number(contrib.late_fee_value) / 100);
     }
 
-    // Get or create the member's group wallet, then lock it so the balance we
-    // read is the one we debit (concurrent pays / deposits can't interleave).
-    await client.query(
-      `INSERT INTO wallets (owner_id, type, group_id, currency)
-       VALUES ($1, 'group', $2, 'ZMW')
-       ON CONFLICT (owner_id, type, group_id) DO UPDATE SET updated_at = NOW()`,
-      [payerUserId, contrib.group_id]
+    // The member's group wallet, locked so the balance we read is the one we
+    // debit (concurrent pays / deposits can't interleave).
+    const wallet = await getOrCreateGroupWallet(
+      client.query.bind(client), payerUserId, contrib.group_id, { forUpdate: true }
     );
-    const walletResult = await client.query(
-      `SELECT * FROM wallets
-       WHERE owner_id = $1 AND type = 'group' AND group_id = $2
-       FOR UPDATE`,
-      [payerUserId, contrib.group_id]
-    );
-    const wallet = walletResult.rows[0];
 
     // Fetch fee config
     const feeResult = await client.query(
@@ -355,15 +346,11 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
       }
     }
 
-    // Get recipient personal wallet
-    const walletResult = await client.query(
-      `INSERT INTO wallets (owner_id, type, currency)
-       VALUES ($1, 'personal', 'ZMW')
-       ON CONFLICT (owner_id, type, group_id) DO UPDATE SET updated_at = NOW()
-       RETURNING *`,
-      [sched.user_id]
+    // Recipient's personal wallet, locked — the old inline upsert never matched
+    // (group_id IS NULL), so it created a fresh wallet on every payout.
+    const wallet = await getOrCreatePersonalWallet(
+      client.query.bind(client), sched.user_id, { forUpdate: true }
     );
-    const wallet = walletResult.rows[0];
 
     // The pot actually paid out is what the group collected this cycle (not the
     // stale expected_amount). Falls back to expected_amount if nothing recorded.

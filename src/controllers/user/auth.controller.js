@@ -5,6 +5,7 @@ const { query } = require('../../config/db');
 const email = require('../../services/email.service');
 const storage = require('../../services/storage.service');
 const { notify } = require('../../services/notification.service');
+const { getOrCreatePersonalWallet } = require('../../services/wallet.service');
 
 
 const generateTokens = (userId, role) => {
@@ -32,6 +33,10 @@ const register = async (req, res, next) => {
     );
 
     const user = result.rows[0];
+
+    // Every user gets a personal wallet up front — without one, "top up my
+    // personal wallet" has nowhere to land.
+    await getOrCreatePersonalWallet(query, user.id);
 
     if (req.file) {
       const url = await storage.uploadFile(

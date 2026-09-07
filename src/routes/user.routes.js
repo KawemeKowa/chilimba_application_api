@@ -213,8 +213,17 @@ miscRouter.get('/groups/:groupId/messages', authenticate, requireGroupMember, mi
 miscRouter.delete('/messages/:messageId', authenticate, miscCtrl.deleteMessage);
 
 // Wallet
+const walletCtrl = require('../controllers/user/wallet.controller');
 miscRouter.get('/wallet', authenticate, miscCtrl.getWallet);
 miscRouter.get('/wallet/transactions', authenticate, miscCtrl.getTransactions);
+miscRouter.post('/wallet/transfer', authenticate, [
+  body('groupId').isUUID(),
+  body('amount').isFloat({ min: 0.01 }),
+], validate, walletCtrl.transferToGroup);
+miscRouter.post('/wallet/withdraw', authenticate, [
+  body('amount').isFloat({ min: 0.01 }),
+  body('destination').optional().isIn(['mobile_money', 'bank']),
+], validate, walletCtrl.withdrawToBank);
 
 // Notifications
 miscRouter.get('/notifications', authenticate, miscCtrl.getNotifications);

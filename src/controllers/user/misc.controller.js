@@ -1,5 +1,6 @@
 const { query } = require('../../config/db');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
+const { getOrCreatePersonalWallet } = require('../../services/wallet.service');
 
 // ─── GROUP MESSAGES ────────────────────────────────────────────────────────────
 
@@ -69,6 +70,10 @@ const deleteMessage = async (req, res, next) => {
 // GET /api/wallet
 const getWallet = async (req, res, next) => {
   try {
+    // Guarantees the personal wallet exists for accounts created before it was
+    // automatic, so the UI always has somewhere to top up.
+    await getOrCreatePersonalWallet(query, req.user.id);
+
     const result = await query(
       `SELECT w.id, w.type, w.currency,
               w.group_id      AS "groupId",
