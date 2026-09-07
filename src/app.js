@@ -16,6 +16,8 @@ const {
   paymentsRouter, webhooksRouter,
 } = require('./routes/user.routes');
 const { adminRouter, superAdminRouter, rolesRouter } = require('./routes/admin.routes');
+const { filesRouter } = require('./routes/files.routes');
+const storage = require('./services/storage.service');
 
 const app = express();
 
@@ -121,9 +123,20 @@ app.get('/api-docs', (req, res) => res.send(SWAGGER_HTML));
 app.get('/api-docs/', (req, res) => res.send(SWAGGER_HTML));
 
 // ─── HEALTH CHECK (public) ────────────────────────────────────────────────────
-app.get(['/health', '/api/health'], (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Reports whether the upload volume is actually mounted and writable — a
+// missing Railway volume is otherwise only discovered when someone tries to
+// upload their ID.
+app.get(['/health', '/api/health'], async (req, res) => {
+  const storageWritable = await storage.isWritable();
+  res.json({
+    status: storageWritable ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    storage: { path: storage.storageRoot(), writable: storageWritable },
+  });
 });
+
+// ─── FILE SERVING (authenticated) ─────────────────────────────────────────────
+app.use('/api/files',         filesRouter);
 
 // ─── USER API ROUTES ──────────────────────────────────────────────────────────
 app.use('/api/auth',          authRouter);
