@@ -44,6 +44,19 @@ adminRouter.post('/users/:userId/reject-kyc', [
   body('reason').trim().notEmpty(),
 ], adminCtrl.rejectKyc);
 
+// Payment reconciliation — audit and rectify money movements.
+// Specific paths before /:referenceId so they aren't swallowed by it.
+const reconCtrl = require('../controllers/admin/reconciliation.controller');
+adminRouter.get('/payments/review', reconCtrl.getReviewQueue);
+adminRouter.post('/payments/reconcile', [
+  body('referenceId').optional().trim(),
+], reconCtrl.runReconciliation);
+adminRouter.get('/payments/:referenceId', reconCtrl.getPaymentDetail);
+adminRouter.post('/payments/:referenceId/resolve', [
+  body('action').isIn(['credit', 'fail', 'clear_flag']),
+  body('note').trim().notEmpty(),
+], reconCtrl.resolveManually);
+
 // Groups
 adminRouter.get('/groups', adminCtrl.listGroups);
 adminRouter.patch('/groups/:groupId/status', [

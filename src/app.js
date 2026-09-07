@@ -18,6 +18,7 @@ const {
 const { adminRouter, superAdminRouter, rolesRouter } = require('./routes/admin.routes');
 const { filesRouter } = require('./routes/files.routes');
 const storage = require('./services/storage.service');
+const { startReconciliationLoop } = require('./services/reconciliation.service');
 
 const app = express();
 
@@ -165,6 +166,9 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   logger.info(`🚀 Chilimba API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+  // Chases up collections whose webhook never arrived — the money left the
+  // customer either way, so we pull the status rather than wait for a push.
+  startReconciliationLoop();
 });
 
 module.exports = app;

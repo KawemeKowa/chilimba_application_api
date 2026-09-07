@@ -7,6 +7,10 @@ const logger   = require('../../config/logger');
 
 // POST /api/payments/deposit
 const initiateDeposit = async (req, res, next) => {
+  // Hoisted so the catch below can resolve the row it created. The previous
+  // version read req.body.referenceId, which the client never sends — the
+  // server generates it — so a Lipila rejection left the row pending forever.
+  let referenceId = null;
   try {
     const { walletId, groupId, amount, method = 'mobile_money' } = req.body;
     let { mobileNumber } = req.body;
@@ -58,7 +62,7 @@ const initiateDeposit = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'walletId or groupId is required.' });
     }
 
-    const referenceId = lipila.generateReferenceId();
+    referenceId = lipila.generateReferenceId();
 
     // Record pending transaction before calling Lipila
     await query(
@@ -117,12 +121,50 @@ const initiateDeposit = async (req, res, next) => {
       currency: wallet.currency,
     }).catch(() => {});
   } catch (err) {
-    // Mark failed if Lipila rejected immediately
-    if (req.body?.referenceId) {
-      query(`UPDATE lipila_transactions SET status='failed' WHERE reference_id=$1`,
-        [req.body.referenceId]).catch(() => {});
+    // Lipila rejected the request (or we never reached it). Close the row we
+    // opened so it can't masquerade as money in flight — but only while it is
+    // still pending, so we never overwrite a webhook that landed first.
+    if (referenceId) {
+      query(
+        `UPDATE lipila_transactions
+         SET status='failed', discrepancy = $2, updated_at = NOW()
+         WHERE reference_id = $1 AND status = 'pending'`,
+        [referenceId, `Request rejected before reaching the provider: ${err.message}`]
+      ).catch(e => logger.error(`[payments] could not fail ${referenceId}: ${e.message}`));
+      recordPaymentEvent({
+        referenceId, event: 'check_failed', source: 'api', actorId: req.user?.id,
+        previousStatus: 'pending', newStatus: 'failed',
+        detail: `Provider call failed: ${err.message}`,
+      }).catch(() => {});
     }
     next(err);
+  }
+};
+
+// ─── PAYMENT EVENT LOG ────────────────────────────────────────────────────────
+/**
+ * Append one row to the money trail. Never throws: an audit write failing must
+ * not break, or roll back, an actual payment. Failures are logged loudly
+ * instead, because a gap in this log is itself a problem worth seeing.
+ */
+const recordPaymentEvent = async ({
+  referenceId, txnId = null, event, source, actorId = null,
+  previousStatus = null, newStatus = null,
+  expectedAmount = null, reportedAmount = null,
+  walletId = null, userId = null, detail = null, payload = null,
+}) => {
+  try {
+    await query(
+      `INSERT INTO payment_events
+         (lipila_transaction_id, reference_id, event, source, previous_status, new_status,
+          expected_amount, reported_amount, wallet_id, user_id, actor_id, detail, payload)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [txnId, referenceId, event, source, previousStatus, newStatus,
+       expectedAmount, reportedAmount, walletId, userId, actorId, detail,
+       payload ? JSON.stringify(payload) : null]
+    );
+  } catch (e) {
+    logger.error(`[payment-events] FAILED to record "${event}" for ${referenceId}: ${e.message}`);
   }
 };
 
@@ -131,29 +173,10 @@ const initiateDeposit = async (req, res, next) => {
 // identifier, paymentType, ... } — to our ledger. Called both by the webhook
 // (payload pushed by Lipila) and by syncTransactionStatus (payload pulled
 // from Lipila's check-status endpoint) so both paths share one code path.
-const processLipilaEvent = async (payload) => {
+const processLipilaEvent = async (payload, { source = 'webhook', actorId = null } = {}) => {
     // Lipila sends referenceId = our UUID
     const { referenceId, status, type, amount, identifier, paymentType } = payload;
-    if (!referenceId) return;
-
-    // Find our transaction
-    const txRes = await query(
-      `SELECT * FROM lipila_transactions WHERE reference_id = $1`,
-      [referenceId]
-    );
-    if (!txRes.rows.length) {
-      logger.warn(`[lipila webhook] unknown referenceId: ${referenceId}`);
-      return;
-    }
-
-    const txn = txRes.rows[0];
-
-    // Idempotency guard — a webhook retry or a manual status sync after the
-    // transaction already resolved must not re-credit the wallet a second time.
-    if (txn.status !== 'pending') {
-      logger.info(`[lipila] ignoring event for already-${txn.status} transaction ${referenceId}`);
-      return;
-    }
+    if (!referenceId) return { applied: false, reason: 'missing referenceId' };
 
     // Lipila's docs say webhooks only fire on a final outcome (Successful or
     // Failed), but in practice a "Pending" status has been observed too —
@@ -163,55 +186,152 @@ const processLipilaEvent = async (payload) => {
     if (status !== 'Successful' && status !== 'Failed') {
       logger.info(`[lipila] non-final status "${status}" for ${referenceId} — leaving as pending`);
       await query(
-        `UPDATE lipila_transactions SET raw_webhook = $1, updated_at = NOW() WHERE reference_id = $2`,
+        `UPDATE lipila_transactions
+         SET raw_webhook = $1, last_checked_at = NOW(), check_attempts = check_attempts + 1,
+             updated_at = NOW()
+         WHERE reference_id = $2`,
         [JSON.stringify(payload), referenceId]
       );
-      return;
+      await recordPaymentEvent({
+        referenceId, event: 'status_reported', source, newStatus: 'pending',
+        detail: `Non-final status "${status}" — still awaiting a final outcome`,
+        payload,
+      });
+      return { applied: false, reason: 'non-final status' };
     }
-
-    // Update transaction record
-    await query(
-      `UPDATE lipila_transactions
-       SET status = $1, lipila_id = COALESCE($2, lipila_id),
-           payment_type = COALESCE($3, payment_type),
-           webhook_received_at = NOW(), raw_webhook = $4, updated_at = NOW()
-       WHERE reference_id = $5`,
-      [
-        status === 'Successful' ? 'successful' : 'failed',
-        identifier || null,
-        paymentType || null,
-        JSON.stringify(payload),
-        referenceId,
-      ]
-    );
 
     const successful = status === 'Successful';
-    const txnType    = (type || txn.type || '').toLowerCase();
+    const newStatus  = successful ? 'successful' : 'failed';
 
-    if (successful && txnType === 'collection' && txn.wallet_id) {
-      // Credit the user's wallet
-      await withTransaction(async (client) => {
+    // Everything below happens in one transaction so the status flip and the
+    // wallet credit cannot come apart, and so a webhook retry racing a manual
+    // sync cannot both credit. The UPDATE only matches while the row is still
+    // pending — whoever gets there first wins, the loser sees zero rows.
+    const result = await withTransaction(async (client) => {
+      const claimed = await client.query(
+        `UPDATE lipila_transactions
+         SET status = $1, lipila_id = COALESCE($2, lipila_id),
+             payment_type = COALESCE($3, payment_type),
+             webhook_received_at = NOW(), raw_webhook = $4,
+             reconciled_at = NOW(), reconciliation_source = $5,
+             last_checked_at = NOW(), check_attempts = check_attempts + 1,
+             updated_at = NOW()
+         WHERE reference_id = $6 AND status = 'pending'
+         RETURNING *`,
+        [newStatus, identifier || null, paymentType || null,
+         JSON.stringify(payload), source, referenceId]
+      );
+
+      if (!claimed.rows.length) {
+        // Either unknown, or already resolved by a competing caller.
+        const existing = await client.query(
+          'SELECT id, status FROM lipila_transactions WHERE reference_id = $1', [referenceId]
+        );
+        if (!existing.rows.length) {
+          logger.warn(`[lipila ${source}] unknown referenceId: ${referenceId}`);
+          return { applied: false, reason: 'unknown reference' };
+        }
+        logger.info(`[lipila ${source}] ${referenceId} already ${existing.rows[0].status} — ignoring duplicate`);
+        return { applied: false, reason: 'already resolved', duplicate: true, txnId: existing.rows[0].id };
+      }
+
+      const txn = claimed.rows[0];
+      const txnType = (type || txn.type || '').toLowerCase();
+
+      // What we asked for vs what the provider says it actually moved. Credit
+      // the reported figure — that is the real money — but never let a
+      // difference pass silently.
+      const expected = Number(txn.amount);
+      const reported = amount != null && amount !== '' ? Number(amount) : expected;
+      const mismatch = Number.isFinite(reported) && Math.abs(reported - expected) > 0.001;
+      const creditAmount = Number.isFinite(reported) ? reported : expected;
+
+      if (mismatch) {
+        const note = `Provider reported ${reported.toFixed(2)} for a ${expected.toFixed(2)} request`;
+        logger.error(`[lipila ${source}] AMOUNT MISMATCH on ${referenceId}: ${note}`);
+        await client.query(
+          `UPDATE lipila_transactions SET discrepancy = $1, needs_review = TRUE WHERE id = $2`,
+          [note, txn.id]
+        );
+      }
+
+      let credited = false;
+      if (successful && txnType === 'collection' && txn.wallet_id) {
         const walletRes = await client.query(
-          `SELECT balance FROM wallets WHERE id = $1 FOR UPDATE`, [txn.wallet_id]
+          'SELECT balance FROM wallets WHERE id = $1 FOR UPDATE', [txn.wallet_id]
         );
-        const before = parseFloat(walletRes.rows[0]?.balance || 0);
-        const after  = before + parseFloat(amount || txn.amount);
+        if (!walletRes.rows.length) {
+          // Money arrived but we have nowhere to put it — must not be silent.
+          await client.query(
+            `UPDATE lipila_transactions
+             SET needs_review = TRUE,
+                 discrepancy = COALESCE(discrepancy || ' | ', '') || 'Wallet missing at credit time'
+             WHERE id = $1`,
+            [txn.id]
+          );
+        } else {
+          const before = Number(walletRes.rows[0].balance);
+          const after  = before + creditAmount;
+          await client.query(
+            'UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2',
+            [after, txn.wallet_id]
+          );
+          await client.query(
+            `INSERT INTO transactions
+               (wallet_id, type, direction, amount, balance_before, balance_after,
+                status, reference_type, description)
+             VALUES ($1,'deposit','credit',$2,$3,$4,'completed','lipila_collection',$5)`,
+            [txn.wallet_id, creditAmount, before, after,
+             `Top-up via ${paymentType || txn.payment_type || 'mobile money'}`]
+          );
+          credited = true;
+          logger.info(`[lipila ${source}] wallet ${txn.wallet_id} credited ${creditAmount} (ref ${referenceId})`);
+        }
+      } else if (successful && txnType === 'collection' && !txn.wallet_id) {
+        await client.query(
+          `UPDATE lipila_transactions
+           SET needs_review = TRUE,
+               discrepancy = COALESCE(discrepancy || ' | ', '') || 'Successful collection with no wallet linked'
+           WHERE id = $1`,
+          [txn.id]
+        );
+      }
 
-        await client.query(
-          `UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2`,
-          [after, txn.wallet_id]
-        );
-        await client.query(
-          `INSERT INTO transactions
-             (wallet_id, type, direction, amount, balance_before, balance_after,
-              status, reference_type, description)
-           VALUES ($1,'deposit','credit',$2,$3,$4,'completed','lipila_collection',$5)`,
-          [txn.wallet_id, amount || txn.amount, before, after,
-           `MoMo top-up via ${paymentType || 'mobile money'}`]
-        );
+      return { applied: true, txn, credited, mismatch, creditAmount, expected, reported, txnType };
+    });
+
+    // Event log outside the transaction — a logging failure must never roll
+    // back a real money movement.
+    if (result.applied) {
+      await recordPaymentEvent({
+        referenceId, txnId: result.txn.id, event: result.credited ? 'credited' : 'status_reported',
+        source, actorId, previousStatus: 'pending', newStatus,
+        expectedAmount: result.expected, reportedAmount: result.reported,
+        walletId: result.txn.wallet_id, userId: result.txn.user_id,
+        detail: result.credited
+          ? `Credited ${result.creditAmount} to wallet`
+          : `Marked ${newStatus}`,
+        payload,
       });
-      logger.info(`[lipila webhook] wallet ${txn.wallet_id} credited ZMW ${amount}`);
+      if (result.mismatch) {
+        await recordPaymentEvent({
+          referenceId, txnId: result.txn.id, event: 'discrepancy', source, actorId,
+          expectedAmount: result.expected, reportedAmount: result.reported,
+          walletId: result.txn.wallet_id, userId: result.txn.user_id,
+          detail: 'Reported amount differs from the requested amount — flagged for review',
+          payload,
+        });
+      }
+    } else if (result.duplicate) {
+      await recordPaymentEvent({
+        referenceId, txnId: result.txnId, event: 'duplicate_ignored', source, actorId,
+        detail: `Duplicate ${status} event ignored — already resolved`, payload,
+      });
     }
+
+    if (!result.applied) return result;
+    const { txn } = result;
+    const txnType = result.txnType;
 
     // ── Email notifications (fire-and-forget) ─────────────────────────────────
     if (txn.user_id) {
@@ -296,7 +416,7 @@ const processLipilaEvent = async (payload) => {
 const handleWebhook = async (req, res) => {
   try {
     logger.info(`[lipila webhook] ${JSON.stringify(req.body)}`);
-    await processLipilaEvent(req.body);
+    await processLipilaEvent(req.body, { source: 'webhook' });
   } catch (err) {
     logger.error(`[lipila webhook] error: ${err.message}`);
   } finally {
@@ -346,7 +466,10 @@ const syncTransactionStatus = async (req, res, next) => {
       throw e;
     }
 
-    await processLipilaEvent(statusRes);
+    await processLipilaEvent(
+      { ...statusRes, referenceId },
+      { source: 'sync', actorId: req.user.id }
+    );
 
     const updated = await query(`SELECT status FROM lipila_transactions WHERE reference_id = $1`, [referenceId]);
     res.json({ success: true, message: 'Status refreshed from Lipila.', data: { status: updated.rows[0].status } });
@@ -446,4 +569,8 @@ module.exports = {
   saveMobileMoney,
   saveBankDetails,
   getPaymentHistory,
+  // Used by the reconciliation sweep so pulled statuses go through exactly the
+  // same atomic path as pushed webhooks.
+  processLipilaEvent,
+  recordPaymentEvent,
 };
