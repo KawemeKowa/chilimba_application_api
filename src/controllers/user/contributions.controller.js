@@ -20,8 +20,20 @@ const getGroupContributions = async (req, res, next) => {
       params
     );
     params.push(limit, offset);
+    // Aliased to camelCase — the client reads amount/dueDate/etc., and a bare
+    // `c.*` was handing it snake_case, so every row rendered as 0 / Invalid Date.
     const result = await query(
-      `SELECT c.*, u.first_name, u.last_name
+      `SELECT c.id, c.group_id AS "groupId", c.user_id AS "userId",
+              c.amount_due::float8  AS amount,
+              c.amount_paid::float8 AS "amountPaid",
+              c.status,
+              c.due_date     AS "dueDate",
+              c.paid_at      AS "paidAt",
+              c.cycle_number AS "cycleNumber",
+              c.round_number AS "roundNumber",
+              c.reference,
+              c.late_fee_charged::float8 AS "lateFeeCharged",
+              u.first_name AS "firstName", u.last_name AS "lastName"
        FROM contributions c JOIN users u ON u.id = c.user_id
        WHERE c.group_id = $1 ${whereExtra}
        ORDER BY c.cycle_number, c.round_number, u.last_name
@@ -50,7 +62,16 @@ const getMyContributions = async (req, res, next) => {
     );
     params.push(limit, offset);
     const result = await query(
-      `SELECT c.*, g.name AS group_name
+      `SELECT c.id, c.group_id AS "groupId", c.user_id AS "userId",
+              c.amount_due::float8  AS amount,
+              c.amount_paid::float8 AS "amountPaid",
+              c.status,
+              c.due_date     AS "dueDate",
+              c.paid_at      AS "paidAt",
+              c.cycle_number AS "cycleNumber",
+              c.round_number AS "roundNumber",
+              c.reference,
+              g.name AS "groupName"
        FROM contributions c JOIN groups g ON g.id = c.group_id
        WHERE c.user_id = $1 ${whereExtra}
        ORDER BY c.due_date DESC
@@ -66,7 +87,15 @@ const getMyContributions = async (req, res, next) => {
 const getUpcomingDues = async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT c.*, g.name AS group_name, g.monthly_amount
+      `SELECT c.id, c.group_id AS "groupId", c.user_id AS "userId",
+              c.amount_due::float8 AS amount,
+              c.status,
+              c.due_date     AS "dueDate",
+              c.cycle_number AS "cycleNumber",
+              c.round_number AS "roundNumber",
+              c.reference,
+              g.name AS "groupName",
+              g.monthly_amount::float8 AS "monthlyAmount"
        FROM contributions c JOIN groups g ON g.id = c.group_id
        WHERE c.user_id = $1 AND c.status = 'pending' AND c.due_date >= NOW()
        ORDER BY c.due_date ASC LIMIT 10`,
