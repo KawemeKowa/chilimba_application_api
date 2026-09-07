@@ -57,6 +57,12 @@ filesRouter.get(/^\/(.+)$/, tokenFromQuery, authenticate, async (req, res, next)
     res.setHeader('X-Content-Type-Options', 'nosniff');
     // Never let an upload execute in the browser's origin
     res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+    // Helmet defaults this to same-origin, which blocks the frontend from
+    // embedding these in an <img> when the API is on a different host (Railway
+    // vs Vercel) — a direct click still worked, which is what made it look like
+    // the images were fine. Access is enforced by the token check above, not by
+    // this header, so allowing cross-origin embedding is safe.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.send(file.buffer);
   } catch (err) {
     logger.error(`[files] serve failed: ${err.message}`);
