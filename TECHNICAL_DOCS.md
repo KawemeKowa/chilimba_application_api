@@ -69,7 +69,8 @@ user_role:        member | group_admin | admin | super_admin
 user_status:      pending_verification | active | suspended | banned
 id_type:          national_id | passport | drivers_license
 
-group_status:     active | paused | completed | dissolved
+group_status:     inactive | active | paused | completed | dissolved
+                  (new groups start 'inactive' until an admin activates them)
 group_member_role:  owner | admin | member
 group_member_status: pending | active | removed | left
 
