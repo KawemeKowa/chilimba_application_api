@@ -143,6 +143,99 @@ const enrollMemberInCycle = async (exec, groupId, userId) => {
 };
 
 /**
+ * Rewrite the current cycle's payout_schedule so it matches the running order
+ * in group_members.payout_order.
+ *
+ * group_members.payout_order is where the *intent* lives — the random shuffle
+ * at activation and the admin's assigned order both write there — but payouts
+ * are actually driven by payout_schedule (that is what the pending-payouts and
+ * disburse queries read). Without this, reordering had no effect on who got
+ * paid when. Call it after anything that changes payout_order.
+ *
+ * Positions keep their dates: slot 1 is always the earliest scheduled_date, so
+ * reordering permutes who holds each slot rather than moving the dates around.
+ * `exec` is a querier (the pool's `query` or a transaction client's `query`).
+ */
+const syncPayoutScheduleToOrder = async (exec, groupId) => {
+  const gRes = await exec(
+    `SELECT monthly_amount, current_cycle, payout_day, schedule_locked
+     FROM groups WHERE id = $1`,
+    [groupId]
+  );
+  if (!gRes.rows.length) return;
+  const g = gRes.rows[0];
+  // Locked after the first payout — the order is settled for good.
+  if (g.schedule_locked) return;
+  const cycle = g.current_cycle || 1;
+
+  // Never re-shuffle a cycle where money has already moved.
+  const settled = await exec(
+    `SELECT 1 FROM payout_schedule
+     WHERE group_id = $1 AND cycle_number = $2 AND status <> 'scheduled' LIMIT 1`,
+    [groupId, cycle]
+  );
+  if (settled.rows.length) return;
+
+  const members = await exec(
+    `SELECT user_id FROM group_members
+     WHERE group_id = $1 AND status = 'active'
+     ORDER BY payout_order ASC NULLS LAST, joined_at ASC`,
+    [groupId]
+  );
+  if (!members.rows.length) return;
+
+  // The existing ladder of dates, one per position, so a reorder doesn't move
+  // anyone's payout month. Positions beyond it get a fresh rung.
+  const slots = await exec(
+    `SELECT scheduled_date FROM payout_schedule
+     WHERE group_id = $1 AND cycle_number = $2 ORDER BY payout_order ASC`,
+    [groupId, cycle]
+  );
+  const dateForSlot = (i) => {
+    if (slots.rows[i]) return slots.rows[i].scheduled_date;
+    const d = new Date();
+    d.setMonth(d.getMonth() + i);
+    setDayClamped(d, g.payout_day || 25);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  // UNIQUE (group_id, cycle_number, payout_order) would trip partway through a
+  // permutation, so park every row on a negative order first. Anything still
+  // negative at the end belongs to someone who is no longer an active member.
+  await exec(
+    `UPDATE payout_schedule SET payout_order = -payout_order
+     WHERE group_id = $1 AND cycle_number = $2`,
+    [groupId, cycle]
+  );
+
+  const expectedPot = Number(g.monthly_amount) * members.rows.length;
+  for (let i = 0; i < members.rows.length; i++) {
+    const userId = members.rows[i].user_id;
+    const upd = await exec(
+      `UPDATE payout_schedule
+       SET payout_order = $1, scheduled_date = $2, expected_amount = $3, updated_at = NOW()
+       WHERE group_id = $4 AND cycle_number = $5 AND user_id = $6`,
+      [i + 1, dateForSlot(i), expectedPot, groupId, cycle, userId]
+    );
+    if (!upd.rowCount) {
+      await exec(
+        `INSERT INTO payout_schedule
+           (group_id, user_id, cycle_number, payout_order, scheduled_date, expected_amount)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [groupId, userId, cycle, i + 1, dateForSlot(i), expectedPot]
+      );
+    }
+  }
+
+  await exec(
+    `DELETE FROM payout_schedule
+     WHERE group_id = $1 AND cycle_number = $2 AND payout_order < 0`,
+    [groupId, cycle]
+  );
+};
+
+/**
  * Record a contribution payment by DEBITING the member's group wallet.
  *
  * Members fund their group wallet first (MoMo top-up via /payments/deposit,
@@ -431,4 +524,4 @@ const disbursePayout = async (payoutScheduleId, adminUserId, options = {}) => {
   });
 };
 
-module.exports = { generatePayoutSchedule, generateContributionRound, enrollMemberInCycle, recordContribution, disbursePayout };
+module.exports = { generatePayoutSchedule, generateContributionRound, enrollMemberInCycle, syncPayoutScheduleToOrder, recordContribution, disbursePayout };

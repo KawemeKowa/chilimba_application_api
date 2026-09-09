@@ -1,5 +1,5 @@
 const { query, withTransaction } = require('../../config/db');
-const { generatePayoutSchedule, generateContributionRound, enrollMemberInCycle } = require('../../services/chilimba.service');
+const { generatePayoutSchedule, generateContributionRound, enrollMemberInCycle, syncPayoutScheduleToOrder } = require('../../services/chilimba.service');
 const { notify, notifyGroup } = require('../../services/notification.service');
 const { paginate, paginatedResponse } = require('../../middleware/errorHandler');
 const slugify = require('slugify');
@@ -574,21 +574,29 @@ const activateGroup = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'The group needs at least 2 active members before it can be activated.' });
     }
 
-    // For random order groups: assign random payout positions now
-    if (group.payout_order_mode === 'random') {
-      const members = await query(
-        `SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active' ORDER BY RANDOM()`,
-        [groupId]
-      );
-      for (let i = 0; i < members.rows.length; i++) {
-        await query(
-          `UPDATE group_members SET payout_order = $1 WHERE group_id = $2 AND user_id = $3`,
-          [i + 1, groupId, members.rows[i].user_id]
+    await withTransaction(async (client) => {
+      // For random order groups: assign random payout positions now
+      if (group.payout_order_mode === 'random') {
+        const members = await client.query(
+          `SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active' ORDER BY RANDOM()`,
+          [groupId]
         );
+        for (let i = 0; i < members.rows.length; i++) {
+          await client.query(
+            `UPDATE group_members SET payout_order = $1 WHERE group_id = $2 AND user_id = $3`,
+            [i + 1, groupId, members.rows[i].user_id]
+          );
+        }
       }
-    }
 
-    await query(`UPDATE groups SET status = 'active' WHERE id = $1`, [groupId]);
+      // Push the settled order into payout_schedule — that, not
+      // group_members.payout_order, is what the disburse path pays out on.
+      // Runs for every mode: the schedule was built at creation time from join
+      // order, before the members and their order were known.
+      await syncPayoutScheduleToOrder(client.query.bind(client), groupId);
+
+      await client.query(`UPDATE groups SET status = 'active' WHERE id = $1`, [groupId]);
+    });
     notify(req.user.id, 'group', 'Group Activated', `${group.name} is now active. The savings cycle has begun!`, { groupId }).catch(() => {});
     res.json({ success: true, message: `${group.name} has been activated. The savings cycle has begun!` });
   } catch (err) { next(err); }

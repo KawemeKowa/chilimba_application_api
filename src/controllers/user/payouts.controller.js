@@ -1,5 +1,5 @@
 const { query, withTransaction } = require('../../config/db');
-const { disbursePayout } = require('../../services/chilimba.service');
+const { disbursePayout, syncPayoutScheduleToOrder } = require('../../services/chilimba.service');
 const { notify, notifyGroup } = require('../../services/notification.service');
 const { getOrCreatePersonalWallet } = require('../../services/wallet.service');
 const { sendPayoutViaLipila } = require('../../services/payoutDisbursement.service');
@@ -155,6 +155,9 @@ const applyOrder = async (client, groupId, newOrder) => {
       [item.payoutOrder, groupId, item.userId]
     );
   }
+  // group_members.payout_order is only the intent; payout_schedule is what
+  // actually gets disbursed. Keep them in step or the new order is cosmetic.
+  await syncPayoutScheduleToOrder(client.query.bind(client), groupId);
 };
 
 // ─── POST /api/groups/:groupId/payout-order ───────────────────────────────────
