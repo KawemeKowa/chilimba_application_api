@@ -294,6 +294,14 @@ const changePassword = async (req, res, next) => {
   }
 };
 
+/**
+ * How many reset links stay usable at once. Members routinely request a second
+ * email before the first arrives — a slow inbox reads as a lost email — so the
+ * newest few all work and the older ones are superseded rather than every link
+ * but the latest being killed on each request.
+ */
+const MAX_ACTIVE_RESET_LINKS = 3;
+
 // POST /api/auth/forgot-password
 const forgotPassword = async (req, res, next) => {
   try {
@@ -307,11 +315,25 @@ const forgotPassword = async (req, res, next) => {
     const user = result.rows[0];
 
     if (user) {
-      // Invalidate any existing unused tokens for this user
+      // Retire only the links beyond the newest MAX_ACTIVE_RESET_LINKS - 1, so
+      // the new one lands alongside the couple that came before it rather than
+      // on top of them. Killing every outstanding link here is what trapped
+      // members: pressing "Send reset link" a second time invalidated the email
+      // already sitting in their inbox, and clicking it then read as an expiry.
       await query(
-        `UPDATE password_resets SET used_at = NOW()
-         WHERE user_id = $1 AND used_at IS NULL`,
-        [user.id]
+        `UPDATE password_resets SET superseded_at = NOW()
+          WHERE user_id = $1
+            AND used_at IS NULL
+            AND superseded_at IS NULL
+            AND id NOT IN (
+              SELECT id FROM password_resets
+               WHERE user_id = $1
+                 AND used_at IS NULL
+                 AND superseded_at IS NULL
+               ORDER BY created_at DESC
+               LIMIT $2
+            )`,
+        [user.id, MAX_ACTIVE_RESET_LINKS - 1]
       );
 
       const token = crypto.randomBytes(32).toString('hex');
@@ -340,24 +362,53 @@ const resetPassword = async (req, res, next) => {
     const { password } = req.body;
 
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    // Fetch the row on token_hash alone and judge it here. Folding the state
+    // into the WHERE clause collapses four different situations into one "no
+    // rows", and the member is left guessing which of them they are in.
     const result = await query(
-      `SELECT pr.id, pr.user_id
+      `SELECT pr.id, pr.user_id, pr.used_at, pr.superseded_at,
+              pr.expires_at <= NOW() AS expired
        FROM password_resets pr
-       WHERE pr.token_hash = $1
-         AND pr.used_at IS NULL
-         AND pr.expires_at > NOW()`,
+       WHERE pr.token_hash = $1`,
       [tokenHash]
     );
 
-    if (!result.rows.length) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired reset link.' });
+    const reset = result.rows[0];
+    if (!reset) {
+      return res.status(400).json({ success: false, message: 'Invalid reset link. Please request a new one.' });
+    }
+    if (reset.used_at) {
+      return res.status(400).json({
+        success: false,
+        message: 'This reset link has already been used. Please request a new one.',
+      });
+    }
+    if (reset.superseded_at) {
+      return res.status(400).json({
+        success: false,
+        message: 'A newer reset link was sent — please use the most recent email.',
+      });
+    }
+    if (reset.expired) {
+      return res.status(400).json({
+        success: false,
+        message: 'This reset link has expired. Please request a new one.',
+      });
     }
 
-    const { id: resetId, user_id: userId } = result.rows[0];
+    const { id: resetId, user_id: userId } = reset;
 
     const passwordHash = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
     await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, userId]);
     await query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [resetId]);
+    // The sibling links are now stale — the password they were issued against
+    // is gone. They read as used rather than superseded, which is what actually
+    // happened from the member's side: the reset went through.
+    await query(
+      `UPDATE password_resets SET used_at = NOW()
+        WHERE user_id = $1 AND id <> $2 AND used_at IS NULL`,
+      [userId, resetId]
+    );
     await query('UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1', [userId]);
 
     res.json({ success: true, message: 'Password reset successfully. Please log in.' });
