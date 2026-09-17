@@ -111,8 +111,24 @@ const getTransactions = async (req, res, next) => {
       params
     );
     params.push(limit, offset);
+    // camelCase like GET /wallet — the client read createdAt off raw t.* rows
+    // and rendered "Invalid Date" on every line.
     const result = await query(
-      `SELECT t.* FROM transactions t JOIN wallets w ON w.id = t.wallet_id
+      `SELECT t.id,
+              t.wallet_id            AS "walletId",
+              t.type, t.direction, t.status,
+              t.amount::float8        AS amount,
+              t.balance_before::float8 AS "balanceBefore",
+              t.balance_after::float8  AS "balanceAfter",
+              t.reference_id         AS "referenceId",
+              t.reference_type       AS "referenceType",
+              t.description,
+              t.created_at           AS "createdAt",
+              w.type                 AS "walletType",
+              g.name                 AS "groupName"
+       FROM transactions t
+       JOIN wallets w ON w.id = t.wallet_id
+       LEFT JOIN groups g ON g.id = w.group_id
        WHERE ${where} ORDER BY t.created_at DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
