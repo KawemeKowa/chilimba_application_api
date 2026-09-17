@@ -30,12 +30,12 @@ const MEMBER_PW = 'Member@2025!';
 const USERS = [
   { first_name: 'Super',    last_name: 'Admin',  email: 'superadmin@chilimba.app', phone: '+260971000001', password: 'Chilimba@2025!', role: 'super_admin', status: 'active',               id_verified: true,  dob: '1980-01-01' },
   { first_name: 'Platform', last_name: 'Admin',  email: 'admin@chilimba.app',      phone: '+260971000002', password: 'Admin@2025!',    role: 'admin',       status: 'active',               id_verified: true,  dob: '1985-06-15' },
-  { first_name: 'Bwalya',   last_name: 'Mwale',  email: 'bwalya@example.com',      phone: '+260976543210', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1992-03-14' },
+  { first_name: 'Bwalya',   last_name: 'Mwale',  email: 'bwalya@example.com',      phone: '+260973044995', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1992-03-14' },
   { first_name: 'Mwansa',   last_name: 'Chanda', email: 'mwansa@example.com',      phone: '+260977654321', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1988-07-22' },
   { first_name: 'Chipo',    last_name: 'Banda',  email: 'chipo@example.com',       phone: '+260978765432', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1995-11-05' },
   { first_name: 'Natasha',  last_name: 'Zulu',   email: 'natasha@example.com',     phone: '+260979000001', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1990-09-19' },
   { first_name: 'Kabwe',    last_name: 'Tembo',  email: 'kabwe@example.com',       phone: '+260979000002', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1993-02-08' },
-  { first_name: 'Temba',    last_name: 'Sakala', email: 'temba@example.com',       phone: '+260979000003', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1987-12-25' },
+  { first_name: 'Temba',    last_name: 'Sakala', email: 'temba@example.com',       phone: '+260976107788', password: MEMBER_PW,        role: 'member',      status: 'active',               id_verified: true,  dob: '1987-12-25' },
   { first_name: 'Mutale',   last_name: 'Phiri',  email: 'mutale@example.com',      phone: '+260979876543', password: MEMBER_PW,        role: 'member',      status: 'pending_verification', id_verified: false, dob: '2000-01-30' },
   { first_name: 'Suspended', last_name: 'User',  email: 'suspended@example.com',   phone: '+260979000009', password: MEMBER_PW,        role: 'member',      status: 'suspended',            id_verified: true,  dob: '1991-04-11' },
 ];
@@ -352,16 +352,19 @@ async function seed() {
   }
 
   // ── Payment methods ────────────────────────────────────────────────────────
-  await addMomo(B, '260976543210', 'mtn');
-  await addMomo(C, '260978765432', 'airtel');
-  await addMomo(T, '260979000003', 'zamtel');
+  // Real tester handsets — every payout recipient in the seeded scenarios is
+  // Bwalya (A, C), Natasha (B, bank) or Temba (D), so a disbursement lands on
+  // a phone someone is holding. Chipo deliberately has no method: wallet-only.
+  await q(`DELETE FROM user_payment_methods WHERE user_id = $1`, [C]);
+  await addMomo(B, '260973044995', 'airtel');
+  await addMomo(T, '260976107788', 'airtel');
   await addBank(N, 'Zanaco', '0123456789', 'Natasha Zulu', 'Cairo Road');
-  console.log('  ✅ Payment methods (3 mobile money, 1 bank)');
+  console.log('  ✅ Payment methods (Bwalya 0973044995, Temba 0976107788 · Natasha bank · Chipo none)');
 
   // ── Personal wallet deposits (Lipila collections + ledger) ──────────────────
   const bWallet = await personalWallet(B, 2);
-  await addLipila({ type: 'collection', status: 'successful', amount: 2, account: '260976543210', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
-  await addLipila({ type: 'collection', status: 'pending', amount: 1, account: '260976543210', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
+  await addLipila({ type: 'collection', status: 'successful', amount: 2, account: '260973044995', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
+  await addLipila({ type: 'collection', status: 'pending', amount: 1, account: '260973044995', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
   await q(`INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after, status, reference_type, description)
            VALUES ($1,'deposit','credit',2,0,2,'completed','lipila_collection','MoMo top-up via MTNMoney')`, [bWallet]);
   const nWallet = await personalWallet(N, 3);

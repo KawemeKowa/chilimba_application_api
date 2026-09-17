@@ -190,6 +190,9 @@ paymentsRouter.put('/methods/bank', authenticate, [
   body('accountName').trim().notEmpty(),
   body('swiftCode').optional().trim(),
 ], validate, paymentsCtrl.saveBankDetails);
+paymentsRouter.delete('/methods/:type', authenticate, [
+  param('type').isIn(['mobile_money', 'bank']),
+], validate, paymentsCtrl.deletePaymentMethod);
 paymentsRouter.get('/history', authenticate, paymentsCtrl.getPaymentHistory);
 paymentsRouter.post('/sync-status', authenticate, [
   body('referenceId').trim().notEmpty(),

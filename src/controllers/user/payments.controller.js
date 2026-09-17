@@ -523,6 +523,27 @@ const saveMobileMoney = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// DELETE /api/payments/methods/:type
+// Payouts try mobile money first and only fall back to the bank account when
+// there is no number saved, so removing a method is how a member steers
+// payouts to the other one — or to wallet-only, if they remove both.
+const deletePaymentMethod = async (req, res, next) => {
+  try {
+    const { type } = req.params;
+    const result = await query(
+      `DELETE FROM user_payment_methods WHERE user_id = $1 AND type = $2 RETURNING id`,
+      [req.user.id, type]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, message: 'No saved details of that type to remove.' });
+    }
+    res.json({
+      success: true,
+      message: type === 'mobile_money' ? 'Mobile money details removed.' : 'Bank details removed.',
+    });
+  } catch (err) { next(err); }
+};
+
 // PUT /api/payments/methods/bank
 const saveBankDetails = async (req, res, next) => {
   try {
@@ -571,7 +592,7 @@ module.exports = {
   syncTransactionStatus,
   getPaymentMethods,
   saveMobileMoney,
-  saveBankDetails,
+  saveBankDetails, deletePaymentMethod,
   getPaymentHistory,
   // Used by the reconciliation sweep so pulled statuses go through exactly the
   // same atomic path as pushed webhooks.
