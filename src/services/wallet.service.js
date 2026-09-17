@@ -61,4 +61,27 @@ async function getOrCreateGroupWallet(exec, userId, groupId, { forUpdate = false
   return created.rows[0];
 }
 
-module.exports = { getOrCreatePersonalWallet, getOrCreateGroupWallet };
+/**
+ * Refuse money into a group that hasn't been activated. Throws with a status
+ * so controllers can pass it straight to next(); returns the group row
+ * otherwise.
+ *
+ * A group sits 'inactive' while the admin is still gathering members and
+ * settling the payout order. Deposits taken in that window land in wallets
+ * the cycle hasn't been built around yet, and if the group never activates
+ * the money has to be unwound by hand. Both funding paths — Lipila top-ups
+ * and personal→group transfers — run through here.
+ */
+async function assertGroupAcceptsFunds(exec, groupId) {
+  const res = await exec('SELECT id, name, status FROM groups WHERE id = $1', [groupId]);
+  const group = res.rows[0];
+  if (!group) throw Object.assign(new Error('Group not found.'), { status: 404 });
+  if (group.status === 'inactive') {
+    throw Object.assign(new Error(
+      `${group.name} hasn't been activated yet. Deposits open once the group admin activates it.`
+    ), { status: 409 });
+  }
+  return group;
+}
+
+module.exports = { getOrCreatePersonalWallet, getOrCreateGroupWallet, assertGroupAcceptsFunds };

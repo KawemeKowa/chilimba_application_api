@@ -5,6 +5,7 @@ const { paginate, paginatedResponse } = require('../../middleware/errorHandler')
 const slugify = require('slugify');
 const crypto = require('crypto');
 const email = require('../../services/email.service');
+const logger = require('../../config/logger');
 const storage = require('../../services/storage.service');
 
 // Generate unique invite code
@@ -625,8 +626,22 @@ const activateGroup = async (req, res, next) => {
 
       await client.query(`UPDATE groups SET status = 'active' WHERE id = $1`, [groupId]);
     });
-    notify(req.user.id, 'group', 'Group Activated', `${group.name} is now active. The savings cycle has begun!`, { groupId }).catch(() => {});
     res.json({ success: true, message: `${group.name} has been activated. The savings cycle has begun!` });
+
+    // Tell every member, not just the admin who pressed the button. Read the
+    // order after the transaction — random-mode groups only get theirs above.
+    const members = await query(
+      `SELECT u.id, u.first_name, u.email, gm.payout_order
+       FROM group_members gm JOIN users u ON u.id = gm.user_id
+       WHERE gm.group_id = $1 AND gm.status = 'active'`,
+      [groupId]
+    );
+    for (const m of members.rows) {
+      notify(m.id, 'group', 'Group Activated',
+        `${group.name} is now active. The savings cycle has begun!`, { groupId }).catch(() => {});
+      email.sendGroupActivated(m, group, { memberCount: members.rows.length, payoutOrder: m.payout_order })
+        .catch(e => logger.error(`[email] group activated → ${m.email} failed: ${e.message}`));
+    }
   } catch (err) { next(err); }
 };
 

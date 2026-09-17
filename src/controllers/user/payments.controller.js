@@ -2,6 +2,7 @@ const { query, withTransaction } = require('../../config/db');
 const lipila   = require('../../services/lipila.service');
 const email    = require('../../services/email.service');
 const logger   = require('../../config/logger');
+const { assertGroupAcceptsFunds } = require('../../services/wallet.service');
 
 // ─── DEPOSIT (MoMo collection) ────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ const initiateDeposit = async (req, res, next) => {
       if (!gm.rows.length) {
         return res.status(403).json({ success: false, message: 'You are not an active member of this group.' });
       }
+      await assertGroupAcceptsFunds(query, groupId);
       const wRes = await query(
         `INSERT INTO wallets (owner_id, type, currency, group_id)
          VALUES ($1, 'group', COALESCE((SELECT currency FROM groups WHERE id = $2), 'ZMW'), $2)
@@ -51,13 +53,15 @@ const initiateDeposit = async (req, res, next) => {
       wallet = wRes.rows[0];
     } else if (walletId) {
       const walletRes = await query(
-        `SELECT id, owner_id, type, currency FROM wallets WHERE id = $1`,
+        `SELECT id, owner_id, type, currency, group_id FROM wallets WHERE id = $1`,
         [walletId]
       );
       if (!walletRes.rows.length || walletRes.rows[0].owner_id !== req.user.id) {
         return res.status(404).json({ success: false, message: 'Wallet not found' });
       }
       wallet = walletRes.rows[0];
+      // A group wallet addressed by id is still a group deposit.
+      if (wallet.group_id) await assertGroupAcceptsFunds(query, wallet.group_id);
     } else {
       return res.status(400).json({ success: false, message: 'walletId or groupId is required.' });
     }

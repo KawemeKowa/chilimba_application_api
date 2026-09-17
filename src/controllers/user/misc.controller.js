@@ -79,6 +79,7 @@ const getWallet = async (req, res, next) => {
               w.group_id      AS "groupId",
               w.balance::float8 AS balance,
               g.name          AS "groupName",
+              g.status        AS "groupStatus",
               g.monthly_amount::float8 AS "monthlyAmount",
               g.max_members   AS "maxMembers",
               g.current_cycle AS "currentCycle"

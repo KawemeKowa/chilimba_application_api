@@ -1,5 +1,5 @@
 const { query, withTransaction } = require('../../config/db');
-const { getOrCreatePersonalWallet, getOrCreateGroupWallet } = require('../../services/wallet.service');
+const { getOrCreatePersonalWallet, getOrCreateGroupWallet, assertGroupAcceptsFunds } = require('../../services/wallet.service');
 const { notify } = require('../../services/notification.service');
 const lipila = require('../../services/lipila.service');
 const logger = require('../../config/logger');
@@ -29,6 +29,7 @@ const transferToGroup = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'You are not an active member of this group.' });
     }
     const group = membership.rows[0];
+    await assertGroupAcceptsFunds(query, groupId);
 
     const result = await withTransaction(async (client) => {
       const exec = client.query.bind(client);

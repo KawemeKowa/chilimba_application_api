@@ -176,6 +176,30 @@ async function sendGroupCreated(user, group) {
   await send(user.email, `Group "${group.name}" created successfully`, html);
 }
 
+// ─── 3b. Group activated ──────────────────────────────────────────────────────
+// Sent to every active member the moment the admin activates the group. Until
+// then the group is in setup and can't take deposits, so this is the email that
+// tells people the first contribution is now due and what their payout slot is.
+
+async function sendGroupActivated(member, group, { memberCount, payoutOrder }) {
+  const rows = [
+    ['Group',            group.name],
+    ['Members',          memberCount],
+    ['Monthly Due',      `${group.currency || 'ZMW'} ${group.monthly_amount}`],
+    ['Contribution Day', `${group.contribution_day}${ordinal(group.contribution_day)} of each month`],
+    ['Payout Day',       `${group.payout_day}${ordinal(group.payout_day)} of each month`],
+  ];
+  if (payoutOrder) rows.push(['Your Payout Slot', `${payoutOrder}${ordinal(payoutOrder)} in the rotation`]);
+  const html = layout('Group Activated', `
+    ${h1(`${group.name} is now active 🎉`)}
+    ${p(`Hi ${member.first_name}, the admin has activated <strong>${group.name}</strong>. Membership and the payout order are now set, and the savings cycle has begun.`)}
+    ${infoBox(rows)}
+    ${p('You can now top up your group wallet and pay your first contribution. Contributions paid after the contribution day may attract the late fee set in the group constitution.')}
+    ${btn('Open My Group', `${APP_URL}/groups/${group.id}`)}
+  `);
+  await send(member.email, `${group.name} is now active — the savings cycle has begun`, html);
+}
+
 // ─── 4. Member joined ─────────────────────────────────────────────────────────
 
 async function sendMemberJoined(adminEmail, adminName, joiner, group) {
@@ -533,6 +557,7 @@ module.exports = {
   sendPasswordReset,
   sendPasswordChanged,
   sendGroupCreated,
+  sendGroupActivated,
   sendMemberJoined,
   sendJoinedGroup,
   sendMemberRemoved,
