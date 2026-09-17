@@ -63,4 +63,32 @@ async function getEffectivePermissions(userId, groupId = null) {
 
 const hasPermission = (perms, needed) => perms.includes('*') || perms.includes(needed);
 
-module.exports = { PERMISSIONS_CATALOG, getEffectivePermissions, hasPermission };
+/**
+ * User ids of a group's active members who hold a permission — via system
+ * role, the legacy permissions array, or a custom role assignment. Pass
+ * excludeUserId to leave one person out (the requester, the proposer).
+ */
+async function membersWithPermission(groupId, permission, excludeUserId = null) {
+  const r = await query(
+    `SELECT gm.user_id FROM group_members gm
+     WHERE gm.group_id = $1 AND gm.status = 'active'
+       AND ($2::uuid IS NULL OR gm.user_id <> $2)
+       AND EXISTS (
+         SELECT 1 FROM roles ro JOIN role_permissions rp ON rp.role_id = ro.id
+         WHERE rp.permission IN ($3, '*')
+           AND (
+             (ro.scope = 'group' AND ro.name = gm.role::text)
+             OR (ro.scope = 'group' AND ro.name = ANY(gm.permissions))
+             OR ro.id IN (
+               SELECT ur.role_id FROM user_roles ur
+               WHERE ur.user_id = gm.user_id
+                 AND (ur.group_id IS NULL OR ur.group_id = gm.group_id)
+             )
+           )
+       )`,
+    [groupId, excludeUserId, permission]
+  );
+  return r.rows.map(row => row.user_id);
+}
+
+module.exports = { PERMISSIONS_CATALOG, getEffectivePermissions, hasPermission, membersWithPermission };

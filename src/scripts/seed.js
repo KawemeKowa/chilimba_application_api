@@ -259,10 +259,11 @@ async function seed() {
     const token = crypto.randomBytes(32).toString('hex');
     await q(`INSERT INTO group_invitations (group_id, invited_by, email, token, status) VALUES ($1,$2,$3,$4,'pending')`,
       [gid, B, 'mutale@example.com', token]);
-    // A pending withdrawal request by Mwansa
+    // A pending withdrawal request by Chipo — the one plain member, so both
+    // approvers (Bwalya, Mwansa) are free to cast the two votes it needs.
     await q(`INSERT INTO withdrawal_requests (group_id, requested_by, amount, reason, status, approvals_needed, expires_at)
              VALUES ($1,$2,$3,$4,'pending_approval',2,$5)`,
-      [gid, M, 5, 'Medical emergency — need to withdraw early.', iso(daysAhead(3))]);
+      [gid, C, 5, 'Medical emergency — need to withdraw early.', iso(daysAhead(3))]);
     // Committee pool
     await q(`INSERT INTO committee_pools (group_id, created_by, title, description, category, target_amount, raised_amount, status, beneficiary)
              VALUES ($1,$2,$3,$4,'funeral',5,2,'active',$5)`,
@@ -387,7 +388,7 @@ async function seed() {
   await addNotification(M, 'contribution_received', 'Contribution paid',   'Your ZMW 1 contribution to Lusaka North was received.');
   await addNotification(C, 'group_invite',          'Vote needed',         'A payout in Lusaka North needs your approval.');
   await addNotification(K, 'contribution_reminder', 'Contribution due',    'Your ZMW 1 contribution to Kitwe Youth Fund is overdue.');
-  await addNotification(T, 'withdrawal_initiated',  'Withdrawal requested', 'Mwansa requested an early withdrawal in Lusaka North.');
+  await addNotification(B, 'withdrawal_initiated',  'Withdrawal requested', 'Chipo requested an early withdrawal in Lusaka North. Your approval is needed.');
   console.log('  ✅ Notifications');
 
   console.log(`
@@ -422,7 +423,7 @@ async function seed() {
   • Threshold blocking          → Group D: Disburse is disabled, progress bar 33%
   • Approve a payout            → log in as chipo → Group C → approve Bwalya's payout
   • Accept an email invitation  → log in as mutale → open the /invitations link above
-  • Withdrawal approval         → Group A has a pending withdrawal by Mwansa
+  • Withdrawal approval         → Group A has a pending withdrawal by Chipo; Bwalya + Mwansa vote
   • Roles admin                 → superadmin → Roles: see "treasurer" assigned to Kabwe
   • Wallet + deposits           → bwalya has 2 + a pending 1 top-up
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

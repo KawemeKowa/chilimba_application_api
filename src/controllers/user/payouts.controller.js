@@ -5,31 +5,9 @@ const { getOrCreatePersonalWallet } = require('../../services/wallet.service');
 const { sendPayoutViaLipila } = require('../../services/payoutDisbursement.service');
 const logger = require('../../config/logger');
 
-const { getEffectivePermissions, hasPermission } = require('../../services/permissions.service');
+const { getEffectivePermissions, hasPermission, membersWithPermission } = require('../../services/permissions.service');
 
-// Members of a group who hold a given permission (via system role, legacy
-// permissions array, or custom role assignment), excluding one user.
-const otherMembersWithPermission = async (groupId, permission, excludeUserId) => {
-  const r = await query(
-    `SELECT gm.user_id FROM group_members gm
-     WHERE gm.group_id = $1 AND gm.status = 'active' AND gm.user_id != $2
-       AND EXISTS (
-         SELECT 1 FROM roles ro JOIN role_permissions rp ON rp.role_id = ro.id
-         WHERE rp.permission IN ($3, '*')
-           AND (
-             (ro.scope = 'group' AND ro.name = gm.role::text)
-             OR (ro.scope = 'group' AND ro.name = ANY(gm.permissions))
-             OR ro.id IN (
-               SELECT ur.role_id FROM user_roles ur
-               WHERE ur.user_id = gm.user_id
-                 AND (ur.group_id IS NULL OR ur.group_id = gm.group_id)
-             )
-           )
-       )`,
-    [groupId, excludeUserId, permission]
-  );
-  return r.rows.map(row => row.user_id);
-};
+const otherMembersWithPermission = membersWithPermission;
 
 // ─── GET /api/groups/:groupId/payout-order ────────────────────────────────────
 // Current order, members due for payout, and any pending proposal
