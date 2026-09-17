@@ -236,7 +236,7 @@ async function seed() {
   {
     const gid = await upsertGroup({
       name: 'Lusaka North Chilimba', description: 'Community savings — everything paid, votes in, ready for the first payout.',
-      slug: 'lusaka-north-chilimba', monthly: 500, maxMembers: 6, contributionDay: 1, payoutDay: 25,
+      slug: 'lusaka-north-chilimba', monthly: 1, maxMembers: 6, contributionDay: 1, payoutDay: 25,
       minApprovalsWithdrawal: 2, inviteCode: 'DEMO1234', createdBy: B, gracePeriodDays: 5,
       lateFeeType: 'none', lateFeeValue: 0, payoutOrderMode: 'fixed', thresholdPercent: 100,
       approvalMode: 'majority', approvalsRequired: 0,
@@ -247,12 +247,12 @@ async function seed() {
     await addMember(gid, C, 'member', 3, []);
     const due = daysAgo(2);
     for (const u of [B, M, C]) {
-      await addContribution(gid, u, { cycle: 1, round: 1, amount: 500, paid: 500, status: 'paid', due, paidAt: daysAgo(1) });
-      await groupWallet(u, gid, 500);
+      await addContribution(gid, u, { cycle: 1, round: 1, amount: 1, paid: 1, status: 'paid', due, paidAt: daysAgo(1) });
+      await groupWallet(u, gid, 1);
     }
-    const p1 = await addPayout(gid, B, { cycle: 1, order: 1, date: monthsAhead(0), expected: 1500 });
-    await addPayout(gid, M, { cycle: 1, order: 2, date: monthsAhead(1), expected: 1500 });
-    await addPayout(gid, C, { cycle: 1, order: 3, date: monthsAhead(2), expected: 1500 });
+    const p1 = await addPayout(gid, B, { cycle: 1, order: 1, date: monthsAhead(0), expected: 3 });
+    await addPayout(gid, M, { cycle: 1, order: 2, date: monthsAhead(1), expected: 3 });
+    await addPayout(gid, C, { cycle: 1, order: 3, date: monthsAhead(2), expected: 3 });
     await approvePayout(p1, M);  // 2 approvals (majority of 3) → ready
     await approvePayout(p1, C);
     // A pending email invitation for Mutale
@@ -262,10 +262,10 @@ async function seed() {
     // A pending withdrawal request by Mwansa
     await q(`INSERT INTO withdrawal_requests (group_id, requested_by, amount, reason, status, approvals_needed, expires_at)
              VALUES ($1,$2,$3,$4,'pending_approval',2,$5)`,
-      [gid, M, 300, 'Medical emergency — need to withdraw early.', iso(daysAhead(3))]);
+      [gid, M, 5, 'Medical emergency — need to withdraw early.', iso(daysAhead(3))]);
     // Committee pool
     await q(`INSERT INTO committee_pools (group_id, created_by, title, description, category, target_amount, raised_amount, status, beneficiary)
-             VALUES ($1,$2,$3,$4,'funeral',10000,3500,'active',$5)`,
+             VALUES ($1,$2,$3,$4,'funeral',5,2,'active',$5)`,
       [gid, B, 'Funeral Support — Mama Banda', 'Support for the Banda family during this difficult time.', 'Banda Family']);
     await addMessage(gid, B, 'Welcome to Lusaka North Chilimba! Contributions are due on the 1st. 🎉');
     await addMessage(gid, M, 'All paid up on my end. Ready for the first payout!');
@@ -277,7 +277,7 @@ async function seed() {
   {
     const gid = await upsertGroup({
       name: 'Kabwe Traders Circle', description: 'High-trust group — payouts release automatically, no vote needed.',
-      slug: 'kabwe-traders-circle', monthly: 1000, maxMembers: 8, contributionDay: 5, payoutDay: 28,
+      slug: 'kabwe-traders-circle', monthly: 1, maxMembers: 8, contributionDay: 5, payoutDay: 28,
       minApprovalsWithdrawal: 2, inviteCode: 'KABWE001', createdBy: N, gracePeriodDays: 3,
       lateFeeType: 'percentage', lateFeeValue: 5, payoutOrderMode: 'admin_assigned', thresholdPercent: 80,
       approvalMode: 'none', approvalsRequired: 0,
@@ -288,12 +288,12 @@ async function seed() {
     await addMember(gid, T, 'member', 3, []);
     const due = daysAgo(1);
     for (const u of [N, K, T]) {
-      await addContribution(gid, u, { cycle: 1, round: 1, amount: 1000, paid: 1000, status: 'paid', due, paidAt: daysAgo(1) });
-      await groupWallet(u, gid, 1000);
+      await addContribution(gid, u, { cycle: 1, round: 1, amount: 1, paid: 1, status: 'paid', due, paidAt: daysAgo(1) });
+      await groupWallet(u, gid, 1);
     }
-    await addPayout(gid, N, { cycle: 1, order: 1, date: monthsAhead(0), expected: 3000 });
-    await addPayout(gid, K, { cycle: 1, order: 2, date: monthsAhead(1), expected: 3000 });
-    await addPayout(gid, T, { cycle: 1, order: 3, date: monthsAhead(2), expected: 3000 });
+    await addPayout(gid, N, { cycle: 1, order: 1, date: monthsAhead(0), expected: 3 });
+    await addPayout(gid, K, { cycle: 1, order: 2, date: monthsAhead(1), expected: 3 });
+    await addPayout(gid, T, { cycle: 1, order: 3, date: monthsAhead(2), expected: 3 });
     await addMessage(gid, N, 'No voting here — payouts go out automatically once everyone has paid.');
     console.log('  ✅ Group B "Kabwe Traders Circle" (KABWE001) — no-approval, ready to auto-disburse');
   }
@@ -302,9 +302,9 @@ async function seed() {
   {
     const gid = await upsertGroup({
       name: 'Ndola Family Savings', description: 'First payout done — schedule and membership are now locked.',
-      slug: 'ndola-family-savings', monthly: 200, maxMembers: 5, contributionDay: 10, payoutDay: 20,
+      slug: 'ndola-family-savings', monthly: 1, maxMembers: 5, contributionDay: 10, payoutDay: 20,
       minApprovalsWithdrawal: 2, inviteCode: 'NDOLA001', createdBy: C, gracePeriodDays: 5,
-      lateFeeType: 'fixed', lateFeeValue: 20, payoutOrderMode: 'fixed', thresholdPercent: 100,
+      lateFeeType: 'fixed', lateFeeValue: 0.2, payoutOrderMode: 'fixed', thresholdPercent: 100,
       approvalMode: 'majority', approvalsRequired: 0, scheduleLocked: true, membersLocked: true,
     });
     await resetGroupChildren(gid);
@@ -313,13 +313,13 @@ async function seed() {
     await addMember(gid, M, 'member', 3, []);
     const due = daysAgo(20);
     for (const u of [C, B, M]) {
-      await addContribution(gid, u, { cycle: 1, round: 1, amount: 200, paid: 200, status: 'paid', due, paidAt: daysAgo(18) });
-      await groupWallet(u, gid, 200);
+      await addContribution(gid, u, { cycle: 1, round: 1, amount: 1, paid: 1, status: 'paid', due, paidAt: daysAgo(18) });
+      await groupWallet(u, gid, 1);
     }
-    // Order 1 (Chipo) already received; give Chipo a personal-wallet payout credit
-    await addPayout(gid, C, { cycle: 1, order: 1, date: daysAgo(15), expected: 600, status: 'completed', actual: 600, paidAt: daysAgo(15) });
-    const next = await addPayout(gid, B, { cycle: 1, order: 2, date: monthsAhead(0, 20), expected: 600 });
-    await addPayout(gid, M, { cycle: 1, order: 3, date: monthsAhead(1, 20), expected: 600 });
+    // Order 1 (Chipo) already received (3 gross, 2.97 net after the 1% payout fee)
+    await addPayout(gid, C, { cycle: 1, order: 1, date: daysAgo(15), expected: 3, status: 'completed', actual: 2.97, paidAt: daysAgo(15) });
+    const next = await addPayout(gid, B, { cycle: 1, order: 2, date: monthsAhead(0, 20), expected: 3 });
+    await addPayout(gid, M, { cycle: 1, order: 3, date: monthsAhead(1, 20), expected: 3 });
     await approvePayout(next, C);  // 1 of 2 approvals so far — shows a pending vote
     await addMessage(gid, C, 'Thanks all — I received the first payout. Bwalya is next once we approve.');
     console.log('  ✅ Group C "Ndola Family Savings" (NDOLA001) — locked, 1st payout done, Bwalya next (1/2 votes)');
@@ -329,9 +329,9 @@ async function seed() {
   {
     const gid = await upsertGroup({
       name: 'Kitwe Youth Fund', description: 'Only one member has paid — the payout is blocked until the threshold is met.',
-      slug: 'kitwe-youth-fund', monthly: 500, maxMembers: 10, contributionDay: 1, payoutDay: 25,
+      slug: 'kitwe-youth-fund', monthly: 1, maxMembers: 10, contributionDay: 1, payoutDay: 25,
       minApprovalsWithdrawal: 3, inviteCode: 'KITWE001', createdBy: T, gracePeriodDays: 5,
-      lateFeeType: 'fixed', lateFeeValue: 50, payoutOrderMode: 'random', thresholdPercent: 100,
+      lateFeeType: 'fixed', lateFeeValue: 0.5, payoutOrderMode: 'random', thresholdPercent: 100,
       approvalMode: 'majority', approvalsRequired: 0,
     });
     await resetGroupChildren(gid);
@@ -339,15 +339,15 @@ async function seed() {
     await addMember(gid, K, 'member', 2, []);
     await addMember(gid, B, 'member', 3, []);
     const overdue = daysAgo(10);
-    await addContribution(gid, T, { cycle: 1, round: 1, amount: 500, paid: 500, status: 'paid', due: overdue, paidAt: daysAgo(9) });
-    await groupWallet(T, gid, 500);
-    await addContribution(gid, K, { cycle: 1, round: 1, amount: 500, paid: 0, status: 'pending', due: overdue });
-    await addContribution(gid, B, { cycle: 1, round: 1, amount: 500, paid: 0, status: 'pending', due: overdue });
-    await addPayout(gid, T, { cycle: 1, order: 1, date: monthsAhead(0), expected: 1500 });
-    await addPayout(gid, K, { cycle: 1, order: 2, date: monthsAhead(1), expected: 1500 });
-    await addPayout(gid, B, { cycle: 1, order: 3, date: monthsAhead(2), expected: 1500 });
+    await addContribution(gid, T, { cycle: 1, round: 1, amount: 1, paid: 1, status: 'paid', due: overdue, paidAt: daysAgo(9) });
+    await groupWallet(T, gid, 1);
+    await addContribution(gid, K, { cycle: 1, round: 1, amount: 1, paid: 0, status: 'pending', due: overdue });
+    await addContribution(gid, B, { cycle: 1, round: 1, amount: 1, paid: 0, status: 'pending', due: overdue });
+    await addPayout(gid, T, { cycle: 1, order: 1, date: monthsAhead(0), expected: 3 });
+    await addPayout(gid, K, { cycle: 1, order: 2, date: monthsAhead(1), expected: 3 });
+    await addPayout(gid, B, { cycle: 1, order: 3, date: monthsAhead(2), expected: 3 });
     await addMessage(gid, T, 'Reminder: please pay your contributions so we can do the first payout. 🙏');
-    console.log('  ✅ Group D "Kitwe Youth Fund" (KITWE001) — threshold NOT met (500/1500), payout blocked');
+    console.log('  ✅ Group D "Kitwe Youth Fund" (KITWE001) — threshold NOT met (1/3), payout blocked');
   }
 
   // ── Payment methods ────────────────────────────────────────────────────────
@@ -358,16 +358,16 @@ async function seed() {
   console.log('  ✅ Payment methods (3 mobile money, 1 bank)');
 
   // ── Personal wallet deposits (Lipila collections + ledger) ──────────────────
-  const bWallet = await personalWallet(B, 250);
-  await addLipila({ type: 'collection', status: 'successful', amount: 250, account: '260976543210', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
-  await addLipila({ type: 'collection', status: 'pending', amount: 100, account: '260976543210', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
+  const bWallet = await personalWallet(B, 2);
+  await addLipila({ type: 'collection', status: 'successful', amount: 2, account: '260976543210', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
+  await addLipila({ type: 'collection', status: 'pending', amount: 1, account: '260976543210', paymentType: 'MTNMoney', walletId: bWallet, userId: B });
   await q(`INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after, status, reference_type, description)
-           VALUES ($1,'deposit','credit',250,0,250,'completed','lipila_collection','MoMo top-up via MTNMoney')`, [bWallet]);
-  const nWallet = await personalWallet(N, 1000);
-  await addLipila({ type: 'collection', status: 'successful', amount: 1000, account: '260979000001', paymentType: 'AirtelMoney', walletId: nWallet, userId: N });
+           VALUES ($1,'deposit','credit',2,0,2,'completed','lipila_collection','MoMo top-up via MTNMoney')`, [bWallet]);
+  const nWallet = await personalWallet(N, 3);
+  await addLipila({ type: 'collection', status: 'successful', amount: 3, account: '260979000001', paymentType: 'AirtelMoney', walletId: nWallet, userId: N });
   await q(`INSERT INTO transactions (wallet_id, type, direction, amount, balance_before, balance_after, status, reference_type, description)
-           VALUES ($1,'deposit','credit',1000,0,1000,'completed','lipila_collection','MoMo top-up via AirtelMoney')`, [nWallet]);
-  console.log('  ✅ Wallet deposits (Bwalya 250 + pending 100, Natasha 1000)');
+           VALUES ($1,'deposit','credit',3,0,3,'completed','lipila_collection','MoMo top-up via AirtelMoney')`, [nWallet]);
+  console.log('  ✅ Wallet deposits (Bwalya 2 + pending 1, Natasha 3)');
 
   // ── Custom role: "Treasurer" (group scope) assigned to Kabwe in Group B ──────
   const { rows: roleRows } = await q(
@@ -383,10 +383,10 @@ async function seed() {
   console.log('  ✅ Custom role "treasurer" → Kabwe (Group B)');
 
   // ── Notifications ────────────────────────────────────────────────────────────
-  await addNotification(B, 'payout_scheduled',     'Payout ready',        'Your Lusaka North payout of ZMW 1,500 is approved and ready.');
-  await addNotification(M, 'contribution_received', 'Contribution paid',   'Your ZMW 500 contribution to Lusaka North was received.');
+  await addNotification(B, 'payout_scheduled',     'Payout ready',        'Your Lusaka North payout of ZMW 3 is approved and ready.');
+  await addNotification(M, 'contribution_received', 'Contribution paid',   'Your ZMW 1 contribution to Lusaka North was received.');
   await addNotification(C, 'group_invite',          'Vote needed',         'A payout in Lusaka North needs your approval.');
-  await addNotification(K, 'contribution_reminder', 'Contribution due',    'Your ZMW 500 contribution to Kitwe Youth Fund is overdue.');
+  await addNotification(K, 'contribution_reminder', 'Contribution due',    'Your ZMW 1 contribution to Kitwe Youth Fund is overdue.');
   await addNotification(T, 'withdrawal_initiated',  'Withdrawal requested', 'Mwansa requested an early withdrawal in Lusaka North.');
   console.log('  ✅ Notifications');
 
@@ -412,7 +412,7 @@ async function seed() {
   A  Lusaka North Chilimba  DEMO1234  majority vote · READY TO DISBURSE (Bwalya)
   B  Kabwe Traders Circle   KABWE001  no-approval  · READY (auto) · 80% threshold
   C  Ndola Family Savings   NDOLA001  LOCKED · 1st payout done · Bwalya next (1/2 votes)
-  D  Kitwe Youth Fund       KITWE001  payout BLOCKED · threshold not met (500/1500)
+  D  Kitwe Youth Fund       KITWE001  payout BLOCKED · threshold not met (1/3)
 
   SCENARIOS TO TEST
   ───────────────────────────────────────────────────────────────────
@@ -424,7 +424,7 @@ async function seed() {
   • Accept an email invitation  → log in as mutale → open the /invitations link above
   • Withdrawal approval         → Group A has a pending withdrawal by Mwansa
   • Roles admin                 → superadmin → Roles: see "treasurer" assigned to Kabwe
-  • Wallet + deposits           → bwalya has 250 + a pending 100 top-up
+  • Wallet + deposits           → bwalya has 2 + a pending 1 top-up
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `);
 
