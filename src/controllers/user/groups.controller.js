@@ -442,6 +442,32 @@ const inviteMember = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+/**
+ * Why an invitation can't be acted on, or null if it can.
+ *
+ * The 'expired' status is written by two different actions — an admin
+ * cancelling the invite, and a re-send to the same email replacing it — and a
+ * row can also pass its expires_at while still 'pending'. Collapsing all of
+ * those plus accepted/declined into "expired or already used" left members
+ * with a two-day-old link and no idea why it stopped working.
+ *
+ * Accepts rows from either query shape: getInvitation selects gi.* (status),
+ * acceptInvitation aliases it as invitation_status.
+ */
+function invitationBlockedReason(inv) {
+  const status = inv.invitation_status ?? inv.status;
+  if (status === 'accepted') return 'This invitation has already been accepted.';
+  if (status === 'declined') return 'This invitation was declined.';
+  if (status === 'expired') {
+    return 'This invitation was cancelled or replaced by a newer one. '
+      + 'Check your inbox for the latest invitation, or ask the group admin to send a new one.';
+  }
+  if (new Date(inv.expires_at) < new Date()) {
+    return 'This invitation has expired. Ask the group admin to send a new one.';
+  }
+  return null;
+}
+
 // GET /api/groups/invitations/:token  — get invitation details (public)
 const getInvitation = async (req, res, next) => {
   try {
@@ -460,8 +486,9 @@ const getInvitation = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Invitation not found.' });
     }
     const inv = result.rows[0];
-    if (inv.status !== 'pending' || new Date(inv.expires_at) < new Date()) {
-      return res.status(410).json({ success: false, message: 'This invitation has expired or already been used.' });
+    const blocked = invitationBlockedReason(inv);
+    if (blocked) {
+      return res.status(410).json({ success: false, message: blocked });
     }
     const userCheck = await query('SELECT id FROM users WHERE email = $1', [inv.email]);
     res.json({
@@ -504,8 +531,9 @@ const acceptInvitation = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Invitation not found.' });
     }
     const inv = result.rows[0];
-    if (inv.invitation_status !== 'pending' || new Date(inv.expires_at) < new Date()) {
-      return res.status(410).json({ success: false, message: 'This invitation has expired or already been used.' });
+    const blocked = invitationBlockedReason(inv);
+    if (blocked) {
+      return res.status(410).json({ success: false, message: blocked });
     }
 
     // Check email matches the logged-in user
